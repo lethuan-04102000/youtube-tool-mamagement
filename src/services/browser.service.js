@@ -5,31 +5,38 @@ puppeteer.use(StealthPlugin());
 
 class BrowserService {
   
-  async launchBrowser(headless = null) {
+  async launchBrowser(headless = null, browserType = 'chrome') {
     // Use env variable if not explicitly set
     const isHeadless = headless !== null 
       ? headless 
       : process.env.HEADLESS === 'true';
     
-    console.log(`🌐 Launching Chrome browser ${isHeadless ? '(headless)' : '(visible)'}...`);
+    console.log(`🌐 Launching ${browserType} browser ${isHeadless ? '(headless)' : '(visible)'}...`);
 
-    const browser = await puppeteer.launch({
+    const launchOptions = {
       headless: isHeadless,
+      timeout: 60000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
         '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
         '--disable-gpu',
-        '--window-size=1280,900'
+        '--window-size=1280,900',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-popup-blocking',
+        '--disable-infobars',
+        '--disable-features=ChromeWhatsNewUI'
       ],
       defaultViewport: {
         width: 1280,
         height: 900
       },
-      timeout: 60000
-    });
+      ignoreDefaultArgs: ['--enable-automation']
+    };
+
+    const browser = await puppeteer.launch(launchOptions);
     
     return browser;
   }

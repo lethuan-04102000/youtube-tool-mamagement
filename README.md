@@ -177,32 +177,60 @@ POST /api/v1/youtube/upload-avatars
 
 ### 👁️ Watch Video
 
-#### 5. Xem video với nhiều tab
+#### 5. Xem video với nhiều tab (🎭 Human Behavior Simulation)
 ```http
 POST /api/v1/watch/watch-video
 Content-Type: application/json
 
 {
   "videoUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
-  "watchDuration": 30,
-  "numberOfTabs": 5,
-  "useAccounts": false
+  "tabs": 5,
+  "duration": 60,
+  "useAccounts": false,
+  "humanBehavior": true,
+  "randomDuration": false
 }
 ```
+
+**Parameters:**
+- `videoUrl` (required) - YouTube video URL
+- `tabs` (default: 10) - Number of browser tabs to open
+- `duration` (default: 30) - Watch duration in seconds
+- `useAccounts` (default: false) - Use logged-in accounts from database
+- `humanBehavior` (default: true) - Enable human-like behavior simulation
+- `randomDuration` (default: false) - Use random duration (30-180s)
+
+**Human Behavior Features:**
+- 🖱️ Random mouse movements
+- 📜 Random scrolling (view description/comments)
+- ⏸️ Random pause/resume (30% chance)
+- 🔊 Random volume adjustments (20% chance)
+- ⏱️ Natural delays and timing
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Đã xem video với 5 tabs trong 30 giây",
-  "data": {
+  "message": "Watched video in 5/5 tabs",
+  "data": [
+    {
+      "tabIndex": 1,
+      "account": "anonymous",
+      "success": true,
+      "duration": 60
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "success": 5,
+    "failed": 0,
     "videoUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
-    "tabsOpened": 5,
-    "duration": 30,
-    "mode": "anonymous"
+    "duration": 60
   }
 }
 ```
+
+**See also:** [HUMAN_BEHAVIOR_SIMULATION.md](HUMAN_BEHAVIOR_SIMULATION.md) for detailed documentation
 
 ## 🔧 Environment Variables
 
@@ -432,6 +460,11 @@ crontab -e
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
 - **[HEADLESS_CONFIG.md](HEADLESS_CONFIG.md)** - Browser headless configuration
 - **[WATCH_VIDEO_API.md](WATCH_VIDEO_API.md)** - Watch video API documentation
+- **[HUMAN_BEHAVIOR_SIMULATION.md](HUMAN_BEHAVIOR_SIMULATION.md)** - 🎭 Human-like behavior simulation
+- **[SUBSCRIBE_FEATURE.md](SUBSCRIBE_FEATURE.md)** - Subscribe & watch feature
+- **[FACEBOOK_DOWNLOADER_TIPS.md](FACEBOOK_DOWNLOADER_TIPS.md)** - Facebook video downloader
+- **[FEATURES_SUMMARY.md](FEATURES_SUMMARY.md)** - Complete features overview
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing and debugging guide
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Refactoring notes
 
 ## 🐛 Troubleshooting
