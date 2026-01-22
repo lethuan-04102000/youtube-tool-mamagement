@@ -9,7 +9,8 @@ const watchController = require('../../controllers/watch.controller');
  * 
  * Body:
  * - videoUrl: YouTube video URL (required)
- * - tabs: Number of tabs to open (default: 1)
+ * - tabs: Total number of views to generate (default: 1)
+ * - batchSize: Number of tabs to open at once (default: 4)
  * - duration: Duration to watch in seconds (default: 30)
  * - useAccounts: Use logged in accounts with channels from DB (default: false)
  * - humanBehavior: Enable human-like behavior (default: true)

@@ -1,0 +1,3 @@
+email,password,recoveryEmail
+user1@example.com,SecurePass123!,recovery1@example.com
+user2@example.com,SecurePass456!,recovery2@example.com
