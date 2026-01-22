@@ -1,524 +1,452 @@
-# YouTube Account Manager - Automation Tool
+# YouTube Automation Tool - Full Stack
 
-Công cụ tự động hóa quản lý tài khoản YouTube: Setup 2FA (Google Authenticator), tạo channel, upload avatar, và xem video.
+A comprehensive, production-ready YouTube automation platform with a modern web interface and powerful backend for managing views, comments, likes, and account operations at scale.
 
-## ✨ Tính năng chính
+## 🌟 Features
 
-- 🔐 **Setup 2FA tự động** - Tự động cấu hình Google Authenticator cho hàng loạt tài khoản
-- 📺 **Tạo YouTube Channel** - Tự động tạo channel với retry thông minh khi tên không hợp lệ
-- 🖼️ **Upload Avatar** - Tự động upload avatar cho channel
-- 👁️ **Xem Video** - Tự động xem video YouTube (anonymous hoặc với account)
-- 📊 **Quản lý hàng loạt** - Import CSV để xử lý nhiều account cùng lúc
-- 🔄 **Retry thông minh** - Tự động retry với tên khác khi gặp lỗi (4 attempts)
+### Backend (Node.js + Playwright)
+- ✅ **Multi-Browser Support**: Playwright with Firefox for maximum stealth
+- ✅ **Anonymous & Logged-in Viewing**: Support both account-based and anonymous views
+- ✅ **Auto-Comment & Auto-Like**: Random comments from library with human-like typing
+- ✅ **Auto-Subscribe**: Optional channel subscriptions during campaigns
+- ✅ **2FA Support**: Full authenticator app (TOTP) integration
+- ✅ **Proxy Rotation**: Per-tab proxy support for IP diversity
+- ✅ **Anti-Detection**: Browser fingerprinting, random delays, human behavior simulation
+- ✅ **Batch Processing**: Handle multiple accounts/sessions concurrently
+- ✅ **Error Recovery**: Robust error handling and retry mechanisms
 
-## 📁 Cấu trúc thư mục
+### Frontend (Next.js 14 + TypeScript + TailwindCSS)
+- ✅ **Modern Dashboard**: Real-time campaign statistics and monitoring
+- ✅ **Campaign Management**: Start, monitor, and manage watch campaigns
+- ✅ **Account Management**: Upload, view, and manage YouTube accounts
+- ✅ **Comment Library**: Create and organize comment templates
+- ✅ **Campaign History**: Detailed logs and metrics for all campaigns
+- ✅ **Settings Panel**: Configure automation preferences and anti-detection features
+- ✅ **Responsive Design**: Works on desktop, tablet, and mobile
+- ✅ **Real-time Updates**: Live progress tracking and statistics
 
-```
-src/
-├── config/
-│   ├── database.js          # Database configuration
-│   └── constants.js         # Centralized constants (selectors, errors, retry config)
-├── controllers/
-│   ├── verify.authenticator.controller.js  # 2FA verification & channel creation
-│   ├── youtube.controller.js               # YouTube channel & avatar operations
-│   └── watch.controller.js                 # Video watching controller
-├── models/
-│   ├── index.js             # Models exports
-│   └── AccountYoutube.js    # Account model
-├── routes/
-│   ├── index.js             # Main router
-│   └── v1/                  # API v1 routes
-│       ├── index.js
-│       ├── verify.routes.js
-│       ├── youtube.routes.js
-│       └── watch.routes.js
-├── services/
-│   ├── authenticator.service.js     # Google Authenticator operations
-│   ├── browser.service.js           # Puppeteer browser management
-│   ├── google.auth.service.js       # Google login/logout
-│   ├── csv.service.js               # CSV import/export
-│   ├── watch.service.js             # YouTube video watching
-│   ├── youtube.service.js           # Main YouTube service (orchestrator)
-│   └── youtube/                     # YouTube sub-services
-│       ├── channel.service.js       # Channel creation logic
-│       ├── avatar.service.js        # Avatar upload logic
-│       └── retry.service.js         # Retry & error handling
-├── helpers/
-│   ├── name.generator.js    # Channel name generation utilities
-│   └── file.helper.js       # File & path utilities
-├── database/
-│   └── migrations/          # Database migrations
-└── server.js                # Entry point
-```
+## 📋 Table of Contents
 
-## 🚀 Cài đặt
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Frontend Guide](#frontend-guide)
+- [Anti-Detection Features](#anti-detection-features)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+
+## 🚀 Installation
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Python 3.8+ (for authenticator helper)
+- 2GB+ RAM
+- Linux/macOS/Windows
+
+### Backend Setup
 
 ```bash
-# Clone project hoặc navigate đến folder
-cd /Users/er_macbook_287/Documents/WorkSpace/research-and-development/tool-manager-ytb-acc
+# Clone the repository
+git clone <repository-url>
+cd tool-manager-ytb-acc
 
 # Install dependencies
 npm install
 
-# Tạo database MySQL
-mysql -u root -p
-CREATE DATABASE accounts_ytb;
+# Install Playwright browsers
+npx playwright install firefox
 
-# Run migrations để tạo tables
-npx sequelize-cli db:migrate
+# Create accounts CSV file
+cp proxies.example.txt proxies.txt
+# Edit with your proxies (optional)
 
-# Copy và cấu hình environment variables
-cp .env.example .env
-# Chỉnh sửa .env với thông tin database của bạn
-```
-
-## 🏃 Chạy ứng dụng
-
-```bash
-# Development mode với nodemon
-npm run dev
-
-# Production mode
+# Start the backend server
 npm start
 ```
 
-Server sẽ chạy tại: `http://localhost:3006`
+The backend will run on `http://localhost:3000`
 
-## 📚 API Endpoints
+### Frontend Setup
 
-### 🔐 Authenticator & Channel Creation
+```bash
+# Navigate to frontend directory
+cd frontend
 
-#### 1. Setup 2FA + Tạo Channel (Tự động)
-```http
-POST /api/v1/verify-authenticator
-Content-Type: multipart/form-data
+# Install dependencies
+npm install
 
-# Upload CSV file với account list
-file: accounts-list.csv
+# Configure environment
+cp .env.local.example .env.local
+# Edit NEXT_PUBLIC_API_URL if needed
 
-# Optional: Upload avatar zip
-avatars: avatars.zip
+# Start development server
+npm run dev
 ```
 
-**CSV Format:**
+The frontend will run on `http://localhost:3001`
+
+## ⚡ Quick Start
+
+### 1. Using the Frontend (Recommended)
+
+1. **Start Backend**: `npm start` (from root directory)
+2. **Start Frontend**: `cd frontend && npm run dev`
+3. **Open Browser**: Navigate to `http://localhost:3001`
+4. **Upload Accounts**: Go to Accounts page and upload CSV
+5. **Start Campaign**: Go to Watch page and configure your campaign
+
+### 2. Using cURL/API
+
+```bash
+# Watch video with accounts (logged-in)
+curl -X POST http://localhost:3000/api/youtube/watch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "watchTimeSeconds": 180,
+    "useAccounts": true,
+    "accountsFilePath": "./accounts.csv",
+    "autoComment": true,
+    "autoLike": true,
+    "autoSubscribe": false
+  }'
+
+# Watch video anonymously
+curl -X POST http://localhost:3000/api/youtube/watch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "watchTimeSeconds": 120,
+    "useAccounts": false,
+    "anonymousCount": 10
+  }'
+```
+
+## 🔧 Configuration
+
+### Accounts CSV Format
+
 ```csv
-email,password,channel_name
-account1@gmail.com,password123,My Channel 1
-account2@gmail.com,password456,Tech Review Channel
+email,password,recoveryEmail
+user1@gmail.com,SecurePass123!,recovery1@gmail.com
+user2@gmail.com,SecurePass456!,recovery2@gmail.com
 ```
 
-**Response:**
+### Comments Library (`comments.json`)
+
 ```json
 {
-  "success": true,
-  "message": "Completed: 5 success, 0 failed, 0 skipped",
-  "data": [
-    {
-      "email": "account1@gmail.com",
-      "success": true,
-      "secretKey": "ABCD1234...",
-      "channelCreated": true,
-      "channelLink": "https://www.youtube.com/channel/UCxxx",
-      "avatarUploaded": true
-    }
-  ],
-  "summary": {
-    "total": 5,
-    "success": 5,
-    "failed": 0,
-    "skipped": 0
-  }
-}
-```
-
-**Tính năng:**
-- ✅ Import accounts từ CSV
-- ✅ Setup Google Authenticator tự động
-- ✅ Tạo YouTube channel ngay sau khi verify 2FA
-- ✅ Upload avatar tự động (nếu có)
-- ✅ Xử lý parallel với nhiều browser cùng lúc
-- ✅ Skip accounts đã có 2FA + channel
-- ✅ Retry accounts đã có 2FA nhưng chưa có channel
-
-#### 2. Retry Failed Accounts (Không cần CSV)
-```http
-POST /api/v1/verify-authenticator
-# Không gửi file gì, API sẽ tự động lấy accounts từ DB cần retry
-```
-
-### � YouTube Channel Operations
-
-#### 3. Tạo Channel cho accounts chưa có channel
-```http
-POST /api/v1/youtube/create-channels
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Completed: 3 success, 0 failed",
-  "data": [
-    {
-      "email": "account1@gmail.com",
-      "success": true,
-      "channelName": "My Channel 1",
-      "channelLink": "https://www.youtube.com/channel/UCxxx",
-      "avatarUploaded": true
-    }
+  "comments": [
+    { "text": "Great video!", "category": "general" },
+    { "text": "Very informative!", "category": "educational" },
+    { "text": "Thanks for sharing!", "category": "general" }
   ]
 }
 ```
 
-#### 4. Upload Avatar cho channels chưa có avatar
-```http
-POST /api/v1/youtube/upload-avatars
+### Proxy Configuration (`proxies.txt`)
+
+```
+http://username:password@proxy1.example.com:8080
+http://username:password@proxy2.example.com:8080
+socks5://proxy3.example.com:1080
 ```
 
-### 👁️ Watch Video
+## 📚 API Documentation
 
-#### 5. Xem video với nhiều tab (🎭 Human Behavior Simulation)
-```http
-POST /api/v1/watch/watch-video
-Content-Type: application/json
+### Watch Video
 
+**Endpoint**: `POST /api/youtube/watch`
+
+**Request Body**:
+```json
 {
-  "videoUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
-  "tabs": 5,
-  "duration": 60,
-  "useAccounts": false,
-  "humanBehavior": true,
-  "randomDuration": false
+  "videoUrl": "string (required)",
+  "watchTimeSeconds": "number (required)",
+  "useAccounts": "boolean (required)",
+  "anonymousCount": "number (optional, if useAccounts=false)",
+  "accountsFilePath": "string (optional, if useAccounts=true)",
+  "autoComment": "boolean (optional, default: false)",
+  "autoLike": "boolean (optional, default: false)",
+  "autoSubscribe": "boolean (optional, default: false)"
 }
 ```
 
-**Parameters:**
-- `videoUrl` (required) - YouTube video URL
-- `tabs` (default: 10) - Number of browser tabs to open
-- `duration` (default: 30) - Watch duration in seconds
-- `useAccounts` (default: false) - Use logged-in accounts from database
-- `humanBehavior` (default: true) - Enable human-like behavior simulation
-- `randomDuration` (default: false) - Use random duration (30-180s)
-
-**Human Behavior Features:**
-- 🖱️ Random mouse movements
-- 📜 Random scrolling (view description/comments)
-- ⏸️ Random pause/resume (30% chance)
-- 🔊 Random volume adjustments (20% chance)
-- ⏱️ Natural delays and timing
-
-**Response:**
+**Response**:
 ```json
 {
   "success": true,
-  "message": "Watched video in 5/5 tabs",
-  "data": [
-    {
-      "tabIndex": 1,
-      "account": "anonymous",
-      "success": true,
-      "duration": 60
-    }
-  ],
-  "summary": {
-    "total": 5,
-    "success": 5,
+  "message": "Watch campaign completed",
+  "results": {
+    "successful": 15,
     "failed": 0,
-    "videoUrl": "https://www.youtube.com/watch?v=VIDEO_ID",
-    "duration": 60
+    "accounts": [...],
+    "anonymous": [...]
   }
 }
 ```
 
-**See also:** [HUMAN_BEHAVIOR_SIMULATION.md](HUMAN_BEHAVIOR_SIMULATION.md) for detailed documentation
+### Additional Endpoints
 
-## 🔧 Environment Variables
+- `GET /api/accounts` - Get all accounts
+- `POST /api/accounts/upload` - Upload accounts CSV
+- `DELETE /api/accounts/:email` - Delete account
+- `GET /api/comments` - Get comment library
+- `POST /api/comments` - Save comments
+- `GET /api/campaigns/history` - Get campaign history
+- `GET /api/stats` - Get dashboard statistics
 
-```env
-# Server
-PORT=3006
-NODE_ENV=development
+For complete API documentation, see [WATCH_VIDEO_API.md](./WATCH_VIDEO_API.md)
 
-# Browser Settings
-HEADLESS=true                          # Headless mode for YouTube operations (create channel, upload avatar)
-HEADLESS_AUTHENTICATOR=false           # Headless mode for 2FA setup (set false to see QR code if needed)
-CONCURRENT_TABS=5                      # Number of concurrent browsers for parallel processing
+## 🎨 Frontend Guide
 
-# MySQL Database
-DB_HOST=localhost
-DB_USER=root
-DB_PASS=r00t
-DB_NAME=accounts_ytb
-DB_DIALECT=mysql
-DB_PORT=3306
+### Dashboard (`/`)
+- View overall statistics
+- Monitor active campaigns
+- Quick access to all features
+
+### Watch Video (`/watch`)
+- **Video URL**: Enter YouTube video URL
+- **Watch Time**: Duration in seconds (30-3600)
+- **Mode**: Accounts (logged-in) or Anonymous
+- **Features**: Auto-comment, auto-like, auto-subscribe
+- **Advanced**: Proxy rotation, fingerprinting
+
+### Accounts (`/accounts`)
+- **Upload**: CSV file with email, password, recoveryEmail
+- **View Status**: Active, inactive, or 2FA required
+- **Statistics**: Videos watched, comments posted per account
+- **Export**: Download accounts as CSV
+
+### Comments Library (`/comments`)
+- **Add Comments**: Create comment templates
+- **Categorize**: Organize by type (general, educational, etc.)
+- **Edit/Delete**: Manage existing comments
+- **Export**: Download as JSON
+
+### Campaign History (`/history`)
+- **Filter**: By status (running, completed, failed)
+- **Metrics**: Views, comments, likes, watch time
+- **Errors**: Detailed error logs
+- **Progress**: Real-time tracking for running campaigns
+
+### Settings (`/settings`)
+- **API Configuration**: Backend URL
+- **Automation**: Max concurrent browsers, default watch time
+- **Anti-Detection**: Proxies, fingerprinting, headless mode
+- **General**: Auto-save settings
+
+For detailed frontend documentation, see [frontend/API_REFERENCE.md](./frontend/API_REFERENCE.md)
+
+## 🛡️ Anti-Detection Features
+
+### Browser Fingerprinting
+- Randomized user agents
+- Random viewport sizes
+- Random screen resolutions
+- Randomized device types
+- Canvas/WebGL noise
+
+### Human Behavior Simulation
+- Random delays between actions (2-8 seconds)
+- Mouse movements and scrolling
+- Realistic typing speeds (40-80ms per character)
+- Random pauses during video playback
+- Natural navigation patterns
+
+### Proxy Support
+- Per-session proxy rotation
+- HTTP/HTTPS/SOCKS5 support
+- Automatic IP diversity
+- Proxy health checking
+
+### Account Management
+- Session persistence with cookies
+- Automatic 2FA handling
+- Login state management
+- Account cooldown periods
+
+For detailed anti-detection guide, see [ANTI_DETECTION_GUIDE.md](./ANTI_DETECTION_GUIDE.md)
+
+## 💡 Examples
+
+### Example 1: Watch with Accounts + Comments + Likes
+
+```javascript
+const response = await fetch('http://localhost:3000/api/youtube/watch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    videoUrl: 'https://www.youtube.com/watch?v=VIDEO_ID',
+    watchTimeSeconds: 240,
+    useAccounts: true,
+    accountsFilePath: './accounts.csv',
+    autoComment: true,
+    autoLike: true,
+    autoSubscribe: false
+  })
+});
+
+const data = await response.json();
+console.log(data);
 ```
 
-**Chi tiết cấu hình:** Xem [HEADLESS_CONFIG.md](HEADLESS_CONFIG.md)
+### Example 2: Anonymous Batch Viewing
 
-## 🎯 Quy trình xử lý
-
-### 1. Import & Setup 2FA + Channel
-```
-Upload CSV → Import vào DB → Setup 2FA parallel → Tạo Channel → Upload Avatar → Save to DB
-```
-
-### 2. Retry Logic (Channel Creation)
-- **Attempt 1:** Tên gốc
-- **Attempt 2:** Tên gốc + timestamp (6 digits)
-- **Attempt 3:** Tên gốc + random number (4 digits)
-- **Attempt 4:** Tên gốc + UUID suffix (12 chars)
-- **Nếu fail hết:** Throw error, không update DB
-
-### 3. Avatar Selection
-- Avatar được chọn theo `index_avatar` từ folder `avatars/`
-- Support: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`
-- Sort theo số trong filename: `avatar_1.png`, `avatar_2.png`, ...
-
-## � Database Schema
-
-```sql
-CREATE TABLE account_youtubes (
-  id INT PRIMARY KEY AUTO_INCREMENT,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password VARCHAR(255) NOT NULL,
-  channel_name VARCHAR(255),
-  channel_link VARCHAR(512),
-  code_authenticators TEXT,              -- Secret key for Google Authenticator
-  is_authenticator BOOLEAN DEFAULT FALSE,
-  is_create_channel BOOLEAN DEFAULT FALSE,
-  is_upload_avatar BOOLEAN DEFAULT FALSE,
-  folder_avatar VARCHAR(255),            -- Avatar folder name from zip
-  index_avatar INT,                      -- Avatar index (1-based)
-  last_login_at DATETIME,
-  notes TEXT,
-  created_at DATETIME,
-  updated_at DATETIME
-);
+```javascript
+const response = await fetch('http://localhost:3000/api/youtube/watch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    videoUrl: 'https://www.youtube.com/watch?v=VIDEO_ID',
+    watchTimeSeconds: 120,
+    useAccounts: false,
+    anonymousCount: 20
+  })
+});
 ```
 
-## ⏰ Cronjob Setup (Optional)
+### Example 3: Using Frontend Watch Page
 
-Bạn có thể setup cronjob để tự động retry failed accounts:
+1. Navigate to `http://localhost:3001/watch`
+2. Enter video URL
+3. Select "Use Accounts" mode
+4. Set watch time to 180 seconds
+5. Enable "Auto Comment" and "Auto Like"
+6. Click "Start Campaign"
 
-```bash
-# Edit crontab
-crontab -e
-
-# Chạy mỗi 6 giờ để retry accounts chưa setup xong
-0 */6 * * * curl -X POST http://localhost:3006/api/v1/verify-authenticator
-
-# Chạy hàng ngày lúc 2AM để tạo channel cho accounts mới
-0 2 * * * curl -X POST http://localhost:3006/api/v1/youtube/create-channels
-
-# Upload avatars cho channels mới mỗi ngày lúc 3AM
-0 3 * * * curl -X POST http://localhost:3006/api/v1/youtube/upload-avatars
-```
-
-## 📦 Tech Stack
-
-## 📦 Tech Stack
-
-### Backend Framework
-- **Node.js** (v18+) - JavaScript runtime
-- **Express.js** (v4.18+) - Web framework
-- **Sequelize** (v6.35+) - ORM for MySQL
-
-### Database
-- **MySQL** (v8.0+) - Relational database
-- **Sequelize CLI** - Database migrations
-
-### Browser Automation
-- **Puppeteer** (v21+) - Headless Chrome automation
-- **Puppeteer Extra** - Plugins for Puppeteer
-  - `puppeteer-extra-plugin-stealth` - Bypass bot detection
-  - `puppeteer-extra-plugin-adblocker` - Block ads
-
-### Authentication & Security
-- **Speakeasy** (v2.0+) - TOTP/HOTP generator for 2FA
-- **QRCode** (v1.5+) - QR code generation
-
-### File Processing
-- **Multer** (v1.4+) - File upload middleware
-- **CSV Parser** (v3.0+) - CSV file parsing
-- **ADM-ZIP** (v0.5+) - ZIP file extraction
-
-### Utilities
-- **dotenv** (v16.3+) - Environment variables
-- **Morgan** (v1.10+) - HTTP request logger
-- **CORS** (v2.8+) - Cross-Origin Resource Sharing
-- **Nodemon** (dev) - Auto-restart server
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Client (Postman/CURL)                │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Express.js Router                     │
-│  ┌────────────┬──────────────┬───────────────────────┐  │
-│  │ Verify API │ YouTube API  │     Watch API         │  │
-│  └────────────┴──────────────┴───────────────────────┘  │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                      Controllers                         │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  - verify.authenticator.controller.js            │   │
-│  │  - youtube.controller.js                         │   │
-│  │  - watch.controller.js                           │   │
-│  └──────────────────────────────────────────────────┘   │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                        Services                          │
-│  ┌────────────────────────────────────────────────┐     │
-│  │  Main Services:                                │     │
-│  │  - google.auth.service.js (Login/Logout)       │     │
-│  │  - authenticator.service.js (2FA)              │     │
-│  │  - youtube.service.js (Orchestrator)           │     │
-│  │  - watch.service.js (Watch videos)             │     │
-│  │  - browser.service.js (Puppeteer)              │     │
-│  │  - csv.service.js (Import/Export)              │     │
-│  │                                                 │     │
-│  │  YouTube Sub-Services:                         │     │
-│  │  - youtube/channel.service.js                  │     │
-│  │  - youtube/avatar.service.js                   │     │
-│  │  - youtube/retry.service.js                    │     │
-│  └────────────────────────────────────────────────┘     │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Helpers & Utils                       │
-│  ┌────────────────────────────────────────────────┐     │
-│  │  - helpers/name.generator.js                   │     │
-│  │  - helpers/file.helper.js                      │     │
-│  │  - config/constants.js                         │     │
-│  └────────────────────────────────────────────────┘     │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Database (MySQL)                        │
-│  ┌────────────────────────────────────────────────┐     │
-│  │  Models: AccountYoutube                        │     │
-│  │  ORM: Sequelize                                │     │
-│  └────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 🎨 Code Quality
-
-### Design Patterns
-- ✅ **MVC Architecture** - Separation of concerns
-- ✅ **Service Layer Pattern** - Business logic isolation
-- ✅ **Repository Pattern** - Data access abstraction
-- ✅ **Dependency Injection** - Loosely coupled components
-
-### Best Practices
-- ✅ **Clean Code** - Readable and maintainable
-- ✅ **DRY Principle** - Don't Repeat Yourself
-- ✅ **SOLID Principles** - Single Responsibility
-- ✅ **Error Handling** - Graceful error management
-- ✅ **Logging** - Comprehensive logging with emojis
-- ✅ **Documentation** - JSDoc comments
-
-## 🔍 Key Features Details
-
-### 1. Intelligent Retry Mechanism
-- 4 attempts with different naming strategies
-- Preserves original channel name as base
-- Automatic fallback strategies
-- No database update on complete failure
-
-### 2. Parallel Processing
-- Configurable concurrent browsers
-- Batch processing with delays
-- Individual browser instances per account
-- Automatic cleanup on errors
-
-### 3. Avatar Management
-- Index-based avatar selection
-- Support multiple image formats
-- Automatic file sorting
-- Folder-based organization
-
-### 4. Duplicate Prevention
-- Email-based deduplication
-- Skip already processed accounts
-- Intelligent retry logic
-- Status-based filtering
-
-## 📖 Documentation
-
-- **[CODE_STRUCTURE.md](CODE_STRUCTURE.md)** - Detailed code structure and design
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
-- **[HEADLESS_CONFIG.md](HEADLESS_CONFIG.md)** - Browser headless configuration
-- **[WATCH_VIDEO_API.md](WATCH_VIDEO_API.md)** - Watch video API documentation
-- **[HUMAN_BEHAVIOR_SIMULATION.md](HUMAN_BEHAVIOR_SIMULATION.md)** - 🎭 Human-like behavior simulation
-- **[SUBSCRIBE_FEATURE.md](SUBSCRIBE_FEATURE.md)** - Subscribe & watch feature
-- **[FACEBOOK_DOWNLOADER_TIPS.md](FACEBOOK_DOWNLOADER_TIPS.md)** - Facebook video downloader
-- **[FEATURES_SUMMARY.md](FEATURES_SUMMARY.md)** - Complete features overview
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing and debugging guide
-- **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Refactoring notes
+For more examples, see [curl-examples-advanced.sh](./curl-examples-advanced.sh)
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
-**1. Database connection error**
+**Backend won't start**
 ```bash
-# Make sure MySQL is running
-mysql.server start  # macOS
-sudo service mysql start  # Linux
-
-# Verify credentials in .env file
+# Check if port 3000 is in use
+lsof -i :3000
+# Kill process if needed
+kill -9 <PID>
 ```
 
-**2. Browser automation fails**
+**Frontend can't connect to backend**
 ```bash
-# Make sure Chrome/Chromium is installed
-# Puppeteer will auto-download Chromium on first install
-npm install puppeteer
+# Verify backend is running
+curl http://localhost:3000/api/stats
+
+# Check .env.local
+cat frontend/.env.local
 ```
 
-**3. 2FA setup không thấy QR code**
+**Playwright browsers not installed**
 ```bash
-# Set HEADLESS_AUTHENTICATOR=false trong .env
-HEADLESS_AUTHENTICATOR=false
+npx playwright install firefox
 ```
 
-**4. Avatar không upload được**
+**2FA verification fails**
 ```bash
-# Check avatar files trong folder avatars/
-# Format: avatar_1.png, avatar_2.png, ...
-# Support: .png, .jpg, .jpeg, .gif, .webp
+# Ensure authenticator service is running
+# Check Python is installed
+python3 --version
 ```
 
-## 🚀 Performance Tips
+**Accounts show as "2FA Required"**
+- Log in manually once to set up 2FA
+- Run the 2FA setup endpoint
+- Ensure authenticator codes are valid
 
-1. **Adjust concurrent tabs:** Tăng/giảm `CONCURRENT_TABS` tùy theo cấu hình máy
-2. **Use headless mode:** Set `HEADLESS=true` để tăng tốc độ
-3. **Batch processing:** API tự động chia batch để tránh overload
-4. **Database indexing:** Đã index sẵn trên `email`, `is_authenticator`, `is_create_channel`
+### Performance Tips
+
+1. **Limit Concurrent Browsers**: 3-5 recommended for optimal performance
+2. **Use Headless Mode**: Faster but slightly less natural
+3. **Enable Proxy Rotation**: Distribute load across IPs
+4. **Batch Processing**: Process accounts in smaller batches
+5. **Monitor Resources**: Watch CPU/RAM usage
+
+### Error Handling
+
+The system includes comprehensive error handling:
+- Automatic retries for transient failures
+- Detailed error logging
+- Account status tracking
+- Campaign failure recovery
+
+## 📁 Project Structure
+
+```
+.
+├── src/                          # Backend source code
+│   ├── controllers/              # API route handlers
+│   ├── services/                 # Business logic
+│   │   └── playwright/           # Playwright automation
+│   ├── helpers/                  # Utility functions
+│   ├── models/                   # Data models
+│   └── routes/                   # API routes
+├── frontend/                     # Next.js frontend
+│   ├── app/                      # App router pages
+│   ├── components/               # React components
+│   ├── lib/                      # API client & utilities
+│   └── public/                   # Static assets
+├── uploads/                      # Uploaded account files
+├── config/                       # Configuration files
+├── comments.json                 # Comment templates
+├── proxies.txt                   # Proxy list (optional)
+└── server.js                     # Main server entry
+```
+
+## 🔐 Security & Best Practices
+
+### Account Security
+- **Never commit** account credentials to version control
+- Use strong, unique passwords
+- Enable 2FA on all accounts
+- Rotate accounts regularly
+
+### API Security
+- Add authentication/authorization (not included by default)
+- Rate limit API endpoints
+- Validate all inputs
+- Use HTTPS in production
+
+### Proxy Usage
+- Use residential proxies for best results
+- Rotate IPs frequently
+- Monitor proxy health
+- Respect rate limits
+
+### YouTube Guidelines
+- **Use responsibly**: Don't spam or abuse
+- **Follow TOS**: Respect YouTube's terms of service
+- **Rate limiting**: Don't overwhelm YouTube's servers
+- **Natural patterns**: Keep automation human-like
+
+## 📖 Additional Documentation
+
+- [ANTI_DETECTION_GUIDE.md](./ANTI_DETECTION_GUIDE.md) - Detailed anti-detection strategies
+- [PROXY_SETUP.md](./PROXY_SETUP.md) - Proxy configuration guide
+- [COMMENT_LIKE_FEATURE.md](./COMMENT_LIKE_FEATURE.md) - Comment/like feature details
+- [FRONTEND_SETUP.md](./FRONTEND_SETUP.md) - Frontend setup guide
+- [WATCH_VIDEO_API.md](./WATCH_VIDEO_API.md) - Complete API reference
+- [frontend/API_REFERENCE.md](./frontend/API_REFERENCE.md) - Frontend API docs
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution guidelines.
 
 ## 📝 License
 
-MIT License - Free to use and modify
+This project is for educational purposes only. Use responsibly and at your own risk.
 
-## 👨‍💻 Contributing
+## 🆘 Support
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## 📧 Support
-
-Nếu gặp vấn đề, vui lòng tạo issue trên GitHub hoặc liên hệ trực tiếp.
+For issues, questions, or feature requests:
+1. Check existing documentation
+2. Review troubleshooting section
+3. Check backend and frontend logs
+4. Open an issue with detailed information
 
 ---
 
-**Made with ❤️ by [Your Name]**
+**Happy Automating! 🚀**
