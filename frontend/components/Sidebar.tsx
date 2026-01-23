@@ -5,19 +5,15 @@ import { usePathname } from 'next/navigation'
 import { 
   LayoutDashboard, 
   PlayCircle, 
-  Users, 
-  Settings, 
-  FileText,
-  MessageSquare
+  Upload,
+  List
 } from 'lucide-react'
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Boost Views', href: '/watch', icon: PlayCircle },
-  { name: 'Accounts', href: '/accounts', icon: Users },
-  { name: 'Comments', href: '/comments', icon: MessageSquare },
-  { name: 'History', href: '/history', icon: FileText },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Trang chủ', href: '/', icon: LayoutDashboard },
+  { name: 'Danh sách kênh', href: '/list-channels', icon: List },
+  { name: 'Tăng lượt xem', href: '/boost-views', icon: PlayCircle },
+  { name: 'Tải video lên', href: '/upload-video', icon: Upload },
 ]
 
 export function Sidebar() {
@@ -30,7 +26,7 @@ export function Sidebar() {
           {/* Logo */}
           <div className="flex items-center flex-shrink-0 px-4 mb-6">
             <PlayCircle className="w-8 h-8 text-blue-600" />
-            <span className="ml-2 text-xl font-bold text-gray-900">YT Manager</span>
+            <span className="ml-2 text-xl font-bold text-gray-900">Quản lý YT</span>
           </div>
 
           {/* Navigation */}
@@ -66,8 +62,8 @@ export function Sidebar() {
           {/* Footer */}
           <div className="flex-shrink-0 p-4 border-t">
             <div className="text-xs text-gray-500">
-              <p className="font-medium">YouTube Manager</p>
-              <p>Version 2.0.0</p>
+              <p className="font-medium">Quản lý YouTube</p>
+              <p>Phiên bản 2.0.0</p>
             </div>
           </div>
         </div>

@@ -36,11 +36,16 @@ class WatchController {
         });
       }
 
-      // Validate YouTube URL
-      if (!videoUrl.includes('youtube.com/watch') && !videoUrl.includes('youtu.be/')) {
+      // Validate YouTube URL (support regular videos, shorts, and short links)
+      const isValidYouTubeUrl = 
+        videoUrl.includes('youtube.com/watch') || 
+        videoUrl.includes('youtube.com/shorts/') || 
+        videoUrl.includes('youtu.be/');
+        
+      if (!isValidYouTubeUrl) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid YouTube video URL'
+          message: 'Invalid YouTube URL. Supported formats: youtube.com/watch, youtube.com/shorts, youtu.be'
         });
       }
 
