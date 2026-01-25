@@ -4,41 +4,55 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 class BrowserService {
-  
-  async launchBrowser(headless = null, browserType = 'chrome') {
+
+  async launchBrowser(headless = null, retries = 3, browserType = 'chrome') {
     // Use env variable if not explicitly set
-    const isHeadless = headless !== null 
-      ? headless 
+    const isHeadless = headless !== null
+      ? headless
       : process.env.HEADLESS === 'true';
-    
-    console.log(`🌐 Launching ${browserType} browser ${isHeadless ? '(headless)' : '(visible)'}...`);
 
-    const launchOptions = {
-      headless: isHeadless,
-      timeout: 60000,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--window-size=1280,900',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-popup-blocking',
-        '--disable-infobars',
-        '--disable-features=ChromeWhatsNewUI'
-      ],
-      defaultViewport: {
-        width: 1280,
-        height: 900
-      },
-      ignoreDefaultArgs: ['--enable-automation']
-    };
+    console.log(`🌐 Launching Chrome browser ${isHeadless ? '(headless)' : '(visible)'}...`);
 
-    const browser = await puppeteer.launch(launchOptions);
-    
-    return browser;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const browser = await puppeteer.launch({
+          headless: isHeadless,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
+            '--window-size=1280,900',
+            '--disable-features=TranslateUI',
+            '--disable-background-downloads-warning',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-popup-blocking',
+            '--disable-infobars',
+            '--disable-features=ChromeWhatsNewUI'
+          ],
+          ignoreDefaultArgs: ['--enable-automation'],
+          defaultViewport: {
+            width: 1280,
+            height: 900
+          },
+          timeout: 60000
+        });
+
+        console.log(`✅ Browser launched successfully`);
+        return browser;
+      } catch (error) {
+        console.error(`❌ Browser launch attempt ${attempt}/${retries} failed: ${error.message}`);
+        if (attempt < retries) {
+          console.log(`   Retrying in 2 seconds...`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw error;
+        }
+      }
+    }
   }
 
   async createPage(browser) {
