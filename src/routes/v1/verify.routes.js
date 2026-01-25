@@ -9,4 +9,7 @@ router.post('/', upload.fields([
   { name: 'avatars', maxCount: 1 }    // ZIP file (optional)
 ]), verifyAuthenticatorController.autoSetup2FA);
 
+// Retry verify authenticator and create channel for specific account by ID
+router.post('/retry/:id', verifyAuthenticatorController.retryVerifyById);
+
 module.exports = router;

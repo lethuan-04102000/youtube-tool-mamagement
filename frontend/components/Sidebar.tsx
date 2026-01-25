@@ -3,14 +3,12 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { 
-  LayoutDashboard, 
   PlayCircle, 
   Upload,
   List
 } from 'lucide-react'
 
 const navigation = [
-  { name: 'Trang chủ', href: '/', icon: LayoutDashboard },
   { name: 'Danh sách kênh', href: '/list-channels', icon: List },
   { name: 'Tăng lượt xem', href: '/boost-views', icon: PlayCircle },
   { name: 'Tải video lên', href: '/upload-video', icon: Upload },

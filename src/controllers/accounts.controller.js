@@ -11,15 +11,18 @@ exports.getAccounts = async (req, res) => {
       page = 1, 
       limit = 10, 
       search = '', 
-      searchBy = 'all' // 'email', 'channelName', 'all'
+      searchBy = 'all', // 'email', 'channelName', 'all'
+      status = 'all' // 'all', 'incomplete', 'complete'
     } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
 
-    // Build search condition
+    // Build where condition
     let whereCondition = {};
+    
+    // Search filter
     if (search) {
       if (searchBy === 'email') {
         whereCondition.email = { [Op.like]: `%${search}%` };
@@ -34,10 +37,26 @@ exports.getAccounts = async (req, res) => {
       }
     }
 
+    // Status filter
+    if (status === 'incomplete') {
+      // Accounts that don't have authenticator OR don't have channel
+      whereCondition[Op.or] = [
+        { is_authenticator: false },
+        { is_authenticator: null },
+        { is_create_channel: false },
+        { is_create_channel: null }
+      ];
+    } else if (status === 'complete') {
+      // Accounts that have both authenticator AND channel
+      whereCondition.is_authenticator = true;
+      whereCondition.is_create_channel = true;
+    }
+    // 'all' status: no additional filter
+
     // Query database with pagination
     const { count, rows } = await AccountYoutube.findAndCountAll({
       where: whereCondition,
-      attributes: ['id', 'email', 'channel_name', 'channel_link'],
+      attributes: ['id', 'email', 'channel_name', 'channel_link', 'is_authenticator', 'is_create_channel'],
       limit: limitNum,
       offset: offset,
       order: [['createdAt', 'DESC']]
@@ -48,7 +67,9 @@ exports.getAccounts = async (req, res) => {
       id: account.id,
       email: account.email,
       channelName: account.channel_name || '',
-      channelLink: account.channel_link || ''
+      channelLink: account.channel_link || '',
+      isAuthenticator: account.is_authenticator || false,
+      isCreateChannel: account.is_create_channel || false
     }));
 
     // Use helper function for response
