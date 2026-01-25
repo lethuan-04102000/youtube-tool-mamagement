@@ -277,6 +277,96 @@ class VerifyAuthenticatorController {
       });
     }
   }
+
+  // Retry verify authenticator and create channel for specific account by ID
+  async retryVerifyById(req, res) {
+      try {
+      const { id } = req.params;
+      
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account ID is required'
+        });
+      }
+
+      // Find account in database
+      const account = await AccountYoutube.findByPk(id);
+      
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: `Account with ID ${id} not found`
+        });
+      }
+
+      console.log(`\n🔄 Retrying verify for account: ${account.email}`);
+      console.log(`📋 Account info from DB:`);
+      console.log(`   ID: ${account.id}`);
+      console.log(`   Email: ${account.email}`);
+      console.log(`   Channel Name: "${account.channel_name}"`);
+      console.log(`   is_authenticator: ${account.is_authenticator}`);
+      console.log(`   is_create_channel: ${account.is_create_channel}`);
+      console.log(`   code_authenticators: ${account.code_authenticators ? 'EXISTS' : 'NULL'}`);
+      
+      // Prepare account object for processing
+      const accountData = {
+        email: account.email,
+        password: account.password,
+        recoveryEmail: account.recovery_email,
+        channel_name: account.channel_name  // ✅ Use correct field from DB
+      };
+
+      console.log(`📤 Account data to process:`);
+      console.log(`   channel_name: "${accountData.channel_name}"`);
+
+      // Process with existing function
+      const result = await setupSingleAccountWithBrowser(accountData, account.folder_avatar, account.index_avatar);
+
+      // Refetch account from database to get latest status
+      const updatedAccount = await AccountYoutube.findByPk(id);
+      
+      // Return result with updated status
+      if (result.success) {
+        console.log(`✅ Successfully verified account: ${account.email}`);
+        
+        return res.json({
+          success: true,
+          message: 'Account verified and channel created successfully',
+          data: {
+            id: updatedAccount.id,
+            email: updatedAccount.email,
+            channelName: updatedAccount.channel_name,
+            channelLink: updatedAccount.channel_link,
+            is_authenticator: updatedAccount.is_authenticator,
+            is_create_channel: updatedAccount.is_create_channel
+          }
+        });
+      } else {
+        console.log(`❌ Failed to verify account: ${account.email}`);
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Failed to verify account',
+          error: result.error,
+          data: {
+            id: updatedAccount.id,
+            email: updatedAccount.email,
+            is_authenticator: updatedAccount.is_authenticator,
+            is_create_channel: updatedAccount.is_create_channel
+          }
+        });
+      }
+
+    } catch (error) {
+      console.error('Error retrying verify:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error retrying verify',
+        error: error.message
+      });
+    }
+  }
 }
 
 // Setup single account with its own browser instance
@@ -334,12 +424,14 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
 
     // If already has authenticator, skip 2FA setup
     if (existingAccount && existingAccount.is_authenticator === true && secretKey) {
-      console.log('✅ Account đã có Authenticator, skip setup 2FA');
+      console.log('\n✅ Account đã có Authenticator, skip setup 2FA');
       console.log(`🔑 Secret key: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)}`);
       skipAuth = true;
       
-      // Just login
+      // Just login - no need to navigate to 2FA settings
+      console.log('🔐 Đang login...');
       await googleAuthService.login(page, account.email, account.password);
+      console.log('✅ Login thành công, sẵn sàng tạo channel');
       
     } else {
       // Setup 2FA flow
@@ -438,9 +530,14 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
     }
 
     // Check if need to create YouTube channel
+    console.log('\n🔍 Checking channel status...');
     const accountAfterAuth = await AccountYoutube.findOne({
       where: { email: account.email }
     });
+
+    console.log(`   is_authenticator: ${accountAfterAuth.is_authenticator}`);
+    console.log(`   is_create_channel: ${accountAfterAuth.is_create_channel}`);
+    console.log(`   channel_link: ${accountAfterAuth.channel_link || 'null'}`);
 
     let channelInfo = { name: '', link: '' };
     let avatarUploaded = false;
@@ -452,6 +549,9 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
         console.log('\n📺 Đang tạo YouTube channel...');
         
         const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
+        console.log(`📝 Channel name từ DB: "${accountAfterAuth.channel_name}"`);
+        console.log(`📝 Channel name sẽ dùng: "${channelName}"`);
+        
         const createResult = await youtubeService.createChannel(page, channelName);
         
         // Get channel info

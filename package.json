@@ -5,13 +5,21 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "dev": "./start-dev.sh",
+    "dev:backend": "nodemon src/server.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:all": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "install:frontend": "cd frontend && npm install",
+    "build": "./build-prod.sh",
+    "build:frontend": "cd frontend && npm run build",
+    "start:frontend": "cd frontend && npm start",
+    "setup": "npm install && npm run install:frontend && npx playwright install firefox",
     "migrate": "node src/database/migrate.js",
     "migrate:undo": "node src/database/migrate.js --undo",
     "migrate:fresh": "node src/database/migrate.js --fresh",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "echo \"Linting not configured yet\"",
-    "docs": "echo \"Documentation available in CODE_STRUCTURE.md\""
+    "docs": "echo \"Documentation available in README.md, WATCH_VIDEO_API.md, and frontend/API_REFERENCE.md\""
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -22,14 +30,17 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.16.1",
     "node-cron": "^3.0.3",
+    "playwright": "^1.57.0",
     "puppeteer": "^24.35.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-firefox": "^0.5.1",
     "qrcode": "^1.5.4",
     "sequelize": "^6.37.5",
     "speakeasy": "^2.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "concurrently": "^8.2.2"
   }
 }

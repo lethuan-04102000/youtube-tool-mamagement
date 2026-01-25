@@ -5,7 +5,7 @@ puppeteer.use(StealthPlugin());
 
 class BrowserService {
 
-  async launchBrowser(headless = null, retries = 3) {
+  async launchBrowser(headless = null, retries = 3, browserType = 'chrome') {
     // Use env variable if not explicitly set
     const isHeadless = headless !== null
       ? headless
@@ -26,8 +26,12 @@ class BrowserService {
             '--disable-gpu',
             '--window-size=1280,900',
             '--disable-features=TranslateUI',
+            '--disable-background-downloads-warning',
+            '--no-first-run',
+            '--no-default-browser-check',
             '--disable-popup-blocking',
-            '--disable-background-downloads-warning'
+            '--disable-infobars',
+            '--disable-features=ChromeWhatsNewUI'
           ],
           ignoreDefaultArgs: ['--enable-automation'],
           defaultViewport: {
