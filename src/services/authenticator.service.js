@@ -1,4 +1,6 @@
 const speakeasy = require('speakeasy');
+const fs = require('fs');
+const path = require('path');
 
 class AuthenticatorService {
   
@@ -377,16 +379,36 @@ class AuthenticatorService {
 
   async clickTurnOn2StepButton(page) {
     console.log('🔍 Đang tìm nút "Turn on 2-Step Verification"...');
-    await new Promise(r => setTimeout(r, 2000));
+    
+    // Wait a bit for page to settle after OTP verification
+    await new Promise(r => setTimeout(r, 3000));
 
     let clicked = false;
 
-    // Method 1: Find by aria-label attribute
+    // Method 0: Wait for button to appear first
     try {
-      console.log('📍 Thử method 1: Tìm button với aria-label...');
+      console.log('📍 Đang đợi button xuất hiện...');
+      await page.waitForSelector('button[jsname="Pr7Yme"]', {
+        timeout: 10000,
+        visible: true
+      });
+      console.log('✅ Có button với jsname="Pr7Yme" xuất hiện');
+    } catch (e) {
+      console.log('⚠️  Không thấy button xuất hiện sau 10s');
+      await this.debugPageContent(page, `turn-on-2step-timeout-${Date.now()}`);
+    }
+
+    // Method 1: Find by aria-label with exact match
+    try {
+      console.log('📍 Thử method 1: Tìm button với aria-label chính xác...');
       const button = await page.$('button[aria-label="Turn on 2-Step Verification"]');
       if (button) {
         console.log('✅ Tìm thấy button với aria-label');
+        
+        // Scroll to element first
+        await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
+        await new Promise(r => setTimeout(r, 500));
+        
         await button.click();
         await new Promise(r => setTimeout(r, 4000));
         console.log('✅ Đã click "Turn on 2-Step Verification"');
@@ -397,7 +419,7 @@ class AuthenticatorService {
       console.log('⚠️  Method 1 failed:', e.message);
     }
 
-    // Method 2: Find by jsname and verify content
+    // Method 2: Find by jsname and verify aria-label
     if (!clicked) {
       try {
         console.log('📍 Thử method 2: Tìm tất cả buttons với jsname="Pr7Yme"...');
@@ -407,12 +429,36 @@ class AuthenticatorService {
         for (let i = 0; i < buttons.length; i++) {
           const button = buttons[i];
           const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), button);
-          const text = await page.evaluate(el => el.textContent?.trim() || '', button);
+          const text = await page.evaluate(el => {
+            const span = el.querySelector('span[jsname="V67aGc"]');
+            return span ? span.textContent?.trim() : el.textContent?.trim();
+          }, button);
           
-          console.log(`   Button ${i + 1}: aria-label="${ariaLabel}", text="${text}"`);
+          console.log(`   Button ${i + 1}:`);
+          console.log(`      aria-label: "${ariaLabel}"`);
+          console.log(`      text: "${text}"`);
           
           if (ariaLabel && ariaLabel.includes('Turn on 2-Step Verification')) {
             console.log(`✅ Tìm thấy button chính xác tại index ${i + 1}`);
+            
+            // Scroll to element
+            await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
+            await new Promise(r => setTimeout(r, 500));
+            
+            await button.click();
+            await new Promise(r => setTimeout(r, 4000));
+            console.log('✅ Đã click "Turn on 2-Step Verification"');
+            clicked = true;
+            return true;
+          }
+          
+          if (text && text.includes('Turn on 2-Step Verification')) {
+            console.log(`✅ Tìm thấy button qua text tại index ${i + 1}`);
+            
+            // Scroll to element
+            await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
+            await new Promise(r => setTimeout(r, 500));
+            
             await button.click();
             await new Promise(r => setTimeout(r, 4000));
             console.log('✅ Đã click "Turn on 2-Step Verification"');
@@ -425,30 +471,51 @@ class AuthenticatorService {
       }
     }
 
-    // Method 3: Use evaluate to find and click
+    // Method 3: Use evaluate to find and click by aria-label (partial match)
     if (!clicked) {
       try {
-        console.log('📍 Thử method 3: Dùng evaluate để tìm và click...');
+        console.log('📍 Thử method 3: Dùng evaluate với aria-label partial match...');
         clicked = await page.evaluate(() => {
-          // Find by aria-label
+          // Find by aria-label (partial match)
           const button = document.querySelector('button[aria-label*="Turn on 2-Step"]');
           if (button) {
+            console.log('Found button by aria-label partial match');
+            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
             button.click();
             return true;
           }
-          
-          // Find by text content in span
+          return false;
+        });
+
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 4000));
+          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 3)');
+          return true;
+        }
+      } catch (e) {
+        console.log('⚠️  Method 3 failed:', e.message);
+      }
+    }
+
+    // Method 4: Use evaluate to find by span text
+    if (!clicked) {
+      try {
+        console.log('📍 Thử method 4: Dùng evaluate tìm span với jsname="V67aGc"...');
+        clicked = await page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll('button'));
           const turnOnBtn = buttons.find(btn => {
             const span = btn.querySelector('span[jsname="V67aGc"]');
             if (span) {
               const text = span.textContent?.trim() || '';
-              return text.includes('Turn on 2-Step Verification');
+              return text.includes('Turn on 2-Step Verification') || 
+                     text.includes('Turn on 2-Step');
             }
             return false;
           });
           
           if (turnOnBtn) {
+            console.log('Found button by span text');
+            turnOnBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
             turnOnBtn.click();
             return true;
           }
@@ -458,16 +525,53 @@ class AuthenticatorService {
 
         if (clicked) {
           await new Promise(r => setTimeout(r, 4000));
-          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate');
+          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 4)');
           return true;
         }
       } catch (e) {
-        console.log('⚠️  Method 3 failed:', e.message);
+        console.log('⚠️  Method 4 failed:', e.message);
+      }
+    }
+
+    // Method 5: Find by class and jscontroller
+    if (!clicked) {
+      try {
+        console.log('📍 Thử method 5: Tìm button bằng class UywwFc-LgbsSe...');
+        clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button.UywwFc-LgbsSe[jscontroller="O626Fe"]'));
+          
+          for (const btn of buttons) {
+            const ariaLabel = btn.getAttribute('aria-label') || '';
+            const span = btn.querySelector('span[jsname="V67aGc"]');
+            const text = span ? span.textContent?.trim() : '';
+            
+            if (ariaLabel.includes('Turn on 2-Step') || text.includes('Turn on 2-Step')) {
+              console.log('Found button by class and jscontroller');
+              btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              btn.click();
+              return true;
+            }
+          }
+          
+          return false;
+        });
+
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 4000));
+          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 5)');
+          return true;
+        }
+      } catch (e) {
+        console.log('⚠️  Method 5 failed:', e.message);
       }
     }
 
     if (!clicked) {
       console.log('❌ Không tìm thấy nút "Turn on 2-Step Verification"');
+      console.log('💡 Có thể button chưa xuất hiện hoặc đã có 2FA rồi');
+      
+      // Save debug info
+      await this.debugPageContent(page, `turn-on-2step-not-found-${Date.now()}`);
     }
 
     return clicked;
@@ -536,6 +640,29 @@ class AuthenticatorService {
     }
 
     return clicked;
+  }
+
+  // Helper function to debug page content
+  async debugPageContent(page, filename) {
+    try {
+      const debugDir = path.join(__dirname, '../../debug');
+      if (!fs.existsSync(debugDir)) {
+        fs.mkdirSync(debugDir, { recursive: true });
+      }
+      
+      // Save HTML
+      const html = await page.content();
+      const htmlPath = path.join(debugDir, `${filename}.html`);
+      fs.writeFileSync(htmlPath, html);
+      console.log(`🔍 Saved HTML to: ${htmlPath}`);
+      
+      // Save screenshot
+      const screenshotPath = path.join(debugDir, `${filename}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      console.log(`📸 Saved screenshot to: ${screenshotPath}`);
+    } catch (error) {
+      console.log('⚠️  Debug failed:', error.message);
+    }
   }
 }
 

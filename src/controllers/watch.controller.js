@@ -1,10 +1,7 @@
 const { AccountYoutube } = require('../models');
 const browserService = require('../services/browser.service');
-const browserPlaywrightService = require('../services/playwright/browser.service');
 const googleAuthService = require('../services/google.auth.service');
-const googleAuthPlaywrightService = require('../services/playwright/google.auth.service');
 const watchService = require('../services/watch.service');
-const watchPlaywrightService = require('../services/playwright/watch.service');
 const antiDetectionHelper = require('../helpers/anti-detection.helper');
 
 class WatchController {
@@ -36,11 +33,16 @@ class WatchController {
         });
       }
 
-      // Validate YouTube URL
-      if (!videoUrl.includes('youtube.com/watch') && !videoUrl.includes('youtu.be/')) {
+      // Validate YouTube URL (support regular videos, shorts, and short links)
+      const isValidYouTubeUrl = 
+        videoUrl.includes('youtube.com/watch') || 
+        videoUrl.includes('youtube.com/shorts/') || 
+        videoUrl.includes('youtu.be/');
+        
+      if (!isValidYouTubeUrl) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid YouTube video URL'
+          message: 'Invalid YouTube URL. Supported formats: youtube.com/watch, youtube.com/shorts, youtu.be'
         });
       }
 
@@ -191,20 +193,20 @@ class WatchController {
       
       const headless = process.env.HEADLESS === 'true';
       
-      // Use Playwright Firefox for watch controller (lighter and better performance)
-      browser = await browserPlaywrightService.launchBrowser(headless);
+      // Use Puppeteer Chrome with stealth plugin (better for YouTube)
+      browser = await browserService.launchBrowser(headless);
       
-      // ⚡ Create page with proxy (if provided) and randomized fingerprint
-      const page = await browserPlaywrightService.createPage(browser, { proxy });
+      // Create page with anti-detection
+      const page = await browserService.createPage(browser);
 
       // Login if account is provided
       if (account) {
         console.log(`🔐 [Tab ${tabIndex}] Logging in as ${account.email}...`);
-        await googleAuthPlaywrightService.login(page, account.email, account.password);
+        await googleAuthService.login(page, account.email, account.password);
       }
 
       // Watch video with options (human behavior, random duration, etc.)
-      await watchPlaywrightService.watchVideo(page, videoUrl, duration, options);
+      await watchService.watchVideo(page, videoUrl, duration, options);
 
       await browser.close();
       console.log(`✅ [Tab ${tabIndex}] [${label}] Browser closed`);

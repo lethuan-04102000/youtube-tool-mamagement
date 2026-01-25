@@ -1,4 +1,4 @@
-const { firefox } = require('playwright');
+const { chromium } = require('playwright');
 
 class BrowserPlaywrightService {
   
@@ -7,21 +7,23 @@ class BrowserPlaywrightService {
       ? headless 
       : process.env.HEADLESS === 'true';
     
-    console.log(`🦊 Launching Firefox (Playwright) ${isHeadless ? '(headless)' : '(visible)'}...`);
+    console.log(`🌐 Launching Chrome (Playwright) ${isHeadless ? '(headless)' : '(visible)'}...`);
 
     try {
-      const browser = await firefox.launch({
+      const browser = await chromium.launch({
         headless: isHeadless,
+        channel: 'chrome', // Use real Chrome instead of Chromium
         args: [
           '--no-sandbox',
-          '--disable-setuid-sandbox'
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled'
         ]
       });
 
-      console.log('✅ Firefox (Playwright) launched successfully');
+      console.log('✅ Chrome (Playwright) launched successfully');
       return browser;
     } catch (error) {
-      console.error('❌ Firefox launch failed:', error.message);
+      console.error('❌ Chrome launch failed:', error.message);
       throw error;
     }
   }
@@ -29,12 +31,21 @@ class BrowserPlaywrightService {
   async createPage(browser) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      locale: 'en-US',
+      timezoneId: 'America/Los_Angeles'
+    });
+    
+    // Hide automation indicators
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false
+      });
     });
     
     const page = await context.newPage();
     
-    console.log(`🔧 Playwright page created`);
+    console.log(`🔧 Playwright page created with Chrome`);
     
     return page;
   }

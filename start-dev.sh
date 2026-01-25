@@ -37,8 +37,8 @@ trap cleanup SIGINT SIGTERM
 
 # Start backend
 echo ""
-echo -e "${BLUE}🔧 Starting Backend Server...${NC}"
-npm start &
+echo -e "${BLUE}🔧 Starting Backend Server (with auto-reload)...${NC}"
+npx nodemon src/server.js &
 BACKEND_PID=$!
 
 # Wait for backend to start
