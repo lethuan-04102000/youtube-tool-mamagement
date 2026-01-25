@@ -4,34 +4,51 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 class BrowserService {
-  
-  async launchBrowser(headless = null) {
+
+  async launchBrowser(headless = null, retries = 3) {
     // Use env variable if not explicitly set
-    const isHeadless = headless !== null 
-      ? headless 
+    const isHeadless = headless !== null
+      ? headless
       : process.env.HEADLESS === 'true';
-    
+
     console.log(`🌐 Launching Chrome browser ${isHeadless ? '(headless)' : '(visible)'}...`);
 
-    const browser = await puppeteer.launch({
-      headless: isHeadless,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--window-size=1280,900'
-      ],
-      defaultViewport: {
-        width: 1280,
-        height: 900
-      },
-      timeout: 60000
-    });
-    
-    return browser;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const browser = await puppeteer.launch({
+          headless: isHeadless,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
+            '--window-size=1280,900',
+            '--disable-features=TranslateUI',
+            '--disable-popup-blocking',
+            '--disable-background-downloads-warning'
+          ],
+          ignoreDefaultArgs: ['--enable-automation'],
+          defaultViewport: {
+            width: 1280,
+            height: 900
+          },
+          timeout: 60000
+        });
+
+        console.log(`✅ Browser launched successfully`);
+        return browser;
+      } catch (error) {
+        console.error(`❌ Browser launch attempt ${attempt}/${retries} failed: ${error.message}`);
+        if (attempt < retries) {
+          console.log(`   Retrying in 2 seconds...`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw error;
+        }
+      }
+    }
   }
 
   async createPage(browser) {

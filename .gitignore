@@ -6,3 +6,5 @@ database.sqlite
 uploads/
 2fa-setup-results.json
 accounts-updated.csv
+.agent/
+downloads/
