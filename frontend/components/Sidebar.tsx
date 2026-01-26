@@ -4,14 +4,14 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { 
   PlayCircle, 
-  Upload,
-  List
+  List,
+  Video
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Danh sách kênh', href: '/list-channels', icon: List },
   { name: 'Tăng lượt xem', href: '/boost-views', icon: PlayCircle },
-  { name: 'Tải video lên', href: '/upload-video', icon: Upload },
+  { name: 'Video đã tải', href: '/list-videos', icon: Video },
 ]
 
 export function Sidebar() {

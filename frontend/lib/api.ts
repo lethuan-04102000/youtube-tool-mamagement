@@ -65,6 +65,68 @@ export interface RetryVerifyResponse {
   error?: string;
 }
 
+export interface UploadVideoRequest {
+  id?: number;
+  email?: string;
+  sourceUrl: string;
+  title?: string;
+  description?: string;
+  visibility?: 'public' | 'unlisted' | 'private';
+  tags?: string[];
+  scheduleDate?: string; // ISO format: '2025-01-27T20:00:00'
+}
+
+export interface UploadVideoResponse {
+  success: boolean;
+  message: string;
+  data?: {
+    email: string;
+    videoUrl: string;
+    title: string;
+    visibility: string;
+    download?: {
+      filePath: string;
+      title: string;
+      description: string;
+    };
+    upload?: {
+      email: string;
+      videoUrl: string;
+      title: string;
+      visibility: string;
+    };
+  };
+  error?: string;
+}
+
+export interface UploadedVideo {
+  id: number;
+  account_youtube_id: number;
+  email: string;
+  video_url: string;
+  title?: string;
+  source_url?: string;
+  createdAt: string;
+  updatedAt: string;
+  account?: {
+    id: number;
+    email: string;
+    channel_name?: string;
+    channel_link?: string;
+  };
+}
+
+export interface UploadedVideosResponse {
+  success: boolean;
+  data: UploadedVideo[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 // Helper function for API requests
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = buildApiUrl(endpoint);
@@ -151,10 +213,37 @@ export const accountsAPI = {
   },
 };
 
+// Upload API
+export const uploadAPI = {
+  // Download video from URL and upload to YouTube
+  downloadAndUpload: (data: UploadVideoRequest): Promise<UploadVideoResponse> => {
+    return request<UploadVideoResponse>(API_ENDPOINTS.UPLOAD.DOWNLOAD_AND_UPLOAD, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Get uploaded videos list
+  getUploadedVideos: (params?: { 
+    page?: number; 
+    limit?: number; 
+    search?: string 
+  }): Promise<UploadedVideosResponse> => {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.append('page', params.page.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.search) searchParams.append('search', params.search);
+    
+    const endpoint = `${API_ENDPOINTS.UPLOAD.VIDEOS}?${searchParams.toString()}`;
+    return request<UploadedVideosResponse>(endpoint);
+  },
+};
+
 // Export a combined API object
 export const api = {
   watch: watchAPI,
   accounts: accountsAPI,
+  upload: uploadAPI,
 };
 
 export default api;

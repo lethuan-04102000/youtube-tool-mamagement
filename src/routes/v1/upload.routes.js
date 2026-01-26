@@ -29,4 +29,11 @@ router.post('/download-and-upload', uploadController.downloadAndUpload);
  */
 router.get('/downloads', uploadController.getDownloadedFiles);
 
+/**
+ * @route GET /api/v1/upload/videos
+ * @desc Lấy danh sách video đã upload lên YouTube
+ * @query { page?: number, limit?: number, search?: string }
+ */
+router.get('/videos', uploadController.getUploadedVideos);
+
 module.exports = router;

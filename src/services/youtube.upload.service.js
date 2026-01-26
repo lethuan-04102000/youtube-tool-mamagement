@@ -1194,136 +1194,296 @@ class YoutubeUploadService {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // 5. Thiết lập giờ
+    // 5. Thiết lập giờ - NHẬP BẰNG KEYBOARD
     console.log(`   ⏰ Đang thiết lập giờ: ${timeStr}...`);
 
-    // Click mở time dropdown
-    const timeDropdownOpened = await page.evaluate(() => {
-      // Tìm time dropdown - thường là dropdown thứ 2 trong schedule section
-      const timeSelectors = [
-        '#time-of-day-trigger',
-        '#time-of-day',
-        'ytcp-form-dropdown#time-of-day',
-        '[aria-label*="time" i]',
-        '[aria-label*="Time"]',
-        '[class*="time-picker"]',
-        '[class*="timepicker"]'
-      ];
+    // BƯỚC 1: Đợi time input xuất hiện sau khi chọn date (DOM có thể bị re-render)
+    console.log(`      ⏳ Đang đợi time input xuất hiện...`);
+    
+    let timeInputFound = false;
+    const maxWaitTimeInput = 10000; // 10 giây
+    const startWaitTime = Date.now();
+    
+    while (Date.now() - startWaitTime < maxWaitTimeInput && !timeInputFound) {
+      timeInputFound = await page.evaluate(() => {
+        // Không tìm trong scheduleSection nữa vì có thể đã đóng
+        // Tìm trực tiếp trong toàn bộ page
+        
+        // Tìm input có class tp-yt-paper-input
+        const paperInputs = document.querySelectorAll('input.tp-yt-paper-input[autocomplete="off"]');
+        if (paperInputs.length >= 2) return true;
+        
+        // Hoặc tìm trong visibility page (đang ở step cuối)
+        const visibilitySection = document.querySelector('ytcp-video-metadata-visibility, ytcp-video-metadata-planner');
+        if (visibilitySection) {
+          const inputs = visibilitySection.querySelectorAll('input[autocomplete="off"]');
+          if (inputs.length >= 2) return true;
+        }
+        
+        // Tìm tp-yt-iron-input
+        const ironInputs = document.querySelectorAll('tp-yt-iron-input input[autocomplete="off"]');
+        if (ironInputs.length >= 2) return true;
+        
+        return false;
+      });
+      
+      if (!timeInputFound) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    
+    if (!timeInputFound) {
+      console.log(`      ⚠️ Timeout: Không tìm thấy time input sau 10 giây`);
+    } else {
+      console.log(`      ✅ Time input đã xuất hiện`);
+    }
+    
+    await new Promise(r => setTimeout(r, 1000));
 
-      for (const sel of timeSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          el.click();
-          return { success: true, selector: sel };
+    // BƯỚC 2: Click vào time input để focus
+    console.log(`      🖱️  Click vào time input...`);
+    const timeInputClicked = await page.evaluate(() => {
+      // KHÔNG TÌM TRONG SCHEDULE SECTION NỮA - Tìm trong toàn bộ page
+      // Vì sau khi chọn date, schedule section có thể đã collapse/đóng lại
+      
+      let timeInput = null;
+      
+      // Cách 1: Tìm tp-yt-iron-input#input-1 (theo HTML: <tp-yt-iron-input id="input-1">)
+      // Có thể có 2 cái: 1 cho date, 1 cho time
+      const ironInputsWithId = document.querySelectorAll('tp-yt-iron-input#input-1');
+      if (ironInputsWithId.length >= 2) {
+        // Iron input thứ 2 là time input
+        timeInput = ironInputsWithId[1].querySelector('input.tp-yt-paper-input[autocomplete="off"]');
+        console.log('Found via method 1: tp-yt-iron-input#input-1 (index 1)');
+      } else if (ironInputsWithId.length === 1) {
+        // Nếu chỉ có 1, kiểm tra xem có phải time input không (value có dạng giờ)
+        const inp = ironInputsWithId[0].querySelector('input[autocomplete="off"]');
+        const value = inp?.value || '';
+        if (value.match(/\d{1,2}:\d{2}\s*(AM|PM)?/i)) {
+          timeInput = inp;
+          console.log('Found via method 1b: tp-yt-iron-input#input-1 (time pattern match)');
         }
       }
-
-      // Tìm dropdown thứ 2 trong schedule section
-      const scheduleSection = document.querySelector('ytcp-video-metadata-schedule, [class*="schedule"]');
-      if (scheduleSection) {
-        const dropdowns = scheduleSection.querySelectorAll('ytcp-text-dropdown-trigger, ytcp-form-dropdown, [role="listbox"]');
-        if (dropdowns.length >= 2) {
-          dropdowns[1].click();
-          return { success: true, selector: 'schedule-dropdown-2' };
+      
+      // Cách 2: Tìm input có class 'tp-yt-paper-input' trong tp-yt-iron-input
+      if (!timeInput) {
+        const paperInputs = document.querySelectorAll('input.tp-yt-paper-input[autocomplete="off"]');
+        if (paperInputs.length >= 2) {
+          // Input thứ 2 là time input (thứ 1 là date)
+          timeInput = paperInputs[1];
+          console.log('Found via method 2: input.tp-yt-paper-input (index 1)');
         }
       }
-
-      // Tìm theo text format giờ (VD: "12:00 PM")
-      const allElements = document.querySelectorAll('ytcp-text-dropdown-trigger, [role="button"]');
-      for (const el of allElements) {
-        const text = el.textContent.trim();
-        if (text.match(/^\d{1,2}:\d{2}\s*(AM|PM)?$/i)) {
-          el.click();
-          return { success: true, selector: 'time-text-match', text };
+      
+      // Cách 3: Tìm trong visibility section (đang ở step Visibility)
+      if (!timeInput) {
+        const visibilitySection = document.querySelector('ytcp-video-metadata-visibility, ytcp-video-metadata-planner');
+        if (visibilitySection) {
+          const ironInputs = visibilitySection.querySelectorAll('tp-yt-iron-input#input-1');
+          if (ironInputs.length >= 2) {
+            timeInput = ironInputs[1].querySelector('input[autocomplete="off"]');
+            console.log('Found via method 3: visibility section tp-yt-iron-input#input-1 (index 1)');
+          }
         }
       }
+      
+      // Cách 4: Tìm trong tp-yt-paper-input container
+      if (!timeInput) {
+        const paperInputContainers = document.querySelectorAll('tp-yt-paper-input');
+        if (paperInputContainers.length >= 2) {
+          timeInput = paperInputContainers[1].querySelector('input[autocomplete="off"]');
+          console.log('Found via method 4: tp-yt-paper-input container (index 1)');
+        }
+      }
+      
+      // Cách 5: Tìm tất cả tp-yt-iron-input (không giới hạn id)
+      if (!timeInput) {
+        const ironInputs = document.querySelectorAll('tp-yt-iron-input');
+        if (ironInputs.length >= 2) {
+          timeInput = ironInputs[1].querySelector('input[autocomplete="off"]');
+          console.log('Found via method 5: tp-yt-iron-input (index 1)');
+        }
+      }
+      
+      // Cách 6: Tìm tất cả inputs trong visible area
+      if (!timeInput) {
+        const allInputs = document.querySelectorAll('input[autocomplete="off"]:not([style*="display: none"])');
+        if (allInputs.length >= 2) {
+          // Lọc bỏ input ẩn
+          const visibleInputs = Array.from(allInputs).filter(inp => {
+            const rect = inp.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          });
+          if (visibleInputs.length >= 2) {
+            timeInput = visibleInputs[1];
+            console.log('Found via method 6: visible inputs (index 1)');
+          }
+        }
+      }
+      
+      // Cách 7: Tìm input có placeholder về time hoặc value là giờ
+      if (!timeInput) {
+        const allInputs = document.querySelectorAll('input[autocomplete="off"]');
+        for (const input of allInputs) {
+          const placeholder = input.placeholder || '';
+          const value = input.value || '';
+          const ariaLabel = input.getAttribute('aria-label') || '';
+          
+          // Check xem có phải time input không (có format giờ: "5:54 PM", "17:54", etc.)
+          if (placeholder.toLowerCase().includes('time') ||
+              ariaLabel.toLowerCase().includes('time') ||
+              value.match(/\d{1,2}:\d{2}\s*(AM|PM)?/i)) {
+            timeInput = input;
+            console.log('Found via method 7: time pattern match');
+            break;
+          }
+        }
+      }
+      
+      if (timeInput) {
+        // Log thông tin để debug
+        console.log('Found time input:', {
+          className: timeInput.className,
+          id: timeInput.id,
+          tagName: timeInput.tagName,
+          parentTagName: timeInput.parentElement?.tagName,
+          value: timeInput.value,
+          placeholder: timeInput.placeholder
+        });
+        
+        // Scroll vào view trước
+        timeInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        
+        // Focus và click vào input
+        timeInput.focus();
+        timeInput.click();
+        
+        return { 
+          success: true, 
+          value: timeInput.value,
+          placeholder: timeInput.placeholder,
+          id: timeInput.id,
+          className: timeInput.className
+        };
+      }
 
-      return { success: false };
+      // Debug info
+      const paperInputCount = document.querySelectorAll('input.tp-yt-paper-input').length;
+      const allInputCount = document.querySelectorAll('input[autocomplete="off"]').length;
+      const visibleInputCount = Array.from(document.querySelectorAll('input[autocomplete="off"]')).filter(inp => {
+        const rect = inp.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }).length;
+      
+      return { 
+        success: false, 
+        error: 'Time input not found', 
+        paperInputCount,
+        allInputCount,
+        visibleInputCount
+      };
     });
 
-    console.log(`   Time dropdown result:`, timeDropdownOpened);
+    console.log(`      Click result:`, timeInputClicked);
 
-    if (!timeDropdownOpened.success) {
-      console.log('   ⚠️ Không mở được Time dropdown');
+    if (timeInputClicked.success) {
+      console.log(`      ℹ️  Input ID: "${timeInputClicked.id || 'unknown'}"`);
+      console.log(`      ℹ️  Current value: "${timeInputClicked.value}"`);
+      console.log(`      ℹ️  Placeholder: "${timeInputClicked.placeholder || 'none'}"`);
+      console.log(`      ℹ️  Class: "${timeInputClicked.className}"`);
+      await new Promise(r => setTimeout(r, 500));
+      
+      // BƯỚC 3: Xóa value mặc định (triple-click → select all → delete)
+      console.log(`      ⌨️  Đang xóa value mặc định...`);
+      
+      // Thử 1: Triple-click để select all (cách tự nhiên nhất cho text input)
+      await page.keyboard.press('Home'); // Di chuyển về đầu
+      await new Promise(r => setTimeout(r, 200));
+      
+      const isMac = process.platform === 'darwin';
+      
+      // Select all bằng Ctrl/Cmd + A
+      await page.keyboard.down(isMac ? 'Meta' : 'Control');
+      await page.keyboard.press('a');
+      await page.keyboard.up(isMac ? 'Meta' : 'Control');
+      await new Promise(r => setTimeout(r, 300));
+      
+      // Xóa text đã select
+      await page.keyboard.press('Backspace');
+      await new Promise(r => setTimeout(r, 300));
+      
+      // Kiểm tra xem đã xóa hết chưa
+      const afterDelete = await page.evaluate(() => {
+        // Tìm lại time input để check value
+        const ironInputsWithId = document.querySelectorAll('tp-yt-iron-input#input-1');
+        if (ironInputsWithId.length >= 2) {
+          const inp = ironInputsWithId[1].querySelector('input[autocomplete="off"]');
+          return inp ? inp.value : null;
+        }
+        
+        const paperInputs = document.querySelectorAll('input.tp-yt-paper-input[autocomplete="off"]');
+        if (paperInputs.length >= 2) {
+          return paperInputs[1].value;
+        }
+        
+        return null;
+      });
+      
+      console.log(`      ℹ️  Value after delete: "${afterDelete}"`);
+      
+      // Nếu vẫn còn text, thử xóa bằng cách khác
+      if (afterDelete && afterDelete.length > 0) {
+        console.log(`      ⚠️  Vẫn còn text, thử xóa bằng evaluate...`);
+        await page.evaluate(() => {
+          const ironInputsWithId = document.querySelectorAll('tp-yt-iron-input#input-1');
+          if (ironInputsWithId.length >= 2) {
+            const inp = ironInputsWithId[1].querySelector('input[autocomplete="off"]');
+            if (inp) {
+              inp.value = '';
+              inp.dispatchEvent(new Event('input', { bubbles: true }));
+              inp.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          } else {
+            const paperInputs = document.querySelectorAll('input.tp-yt-paper-input[autocomplete="off"]');
+            if (paperInputs.length >= 2) {
+              paperInputs[1].value = '';
+              paperInputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+              paperInputs[1].dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+        });
+        await new Promise(r => setTimeout(r, 300));
+      }
+      
+      console.log(`      ✅ Đã xóa value mặc định`);
+      
+      // BƯỚC 4: Gõ giờ mới
+      console.log(`      ⌨️  Đang gõ giờ: ${timeStr}...`);
+      await page.keyboard.type(timeStr, { delay: 100 });
+      console.log(`      ✅ Đã gõ giờ: ${timeStr}`);
+      
+      await new Promise(r => setTimeout(r, 500));
+      
+      // BƯỚC 5: Nhấn Enter để confirm
+      console.log(`      ⏎ Nhấn Enter...`);
+      await page.keyboard.press('Enter');
+      await new Promise(r => setTimeout(r, 500));
+      
+      // BƯỚC 6: Nhấn Tab để trigger validation và move focus
+      console.log(`      ⇥ Nhấn Tab...`);
+      await page.keyboard.press('Tab');
+      
+      console.log(`      ✅ Hoàn tất nhập giờ (Xóa → Type → Enter → Tab)`);
+      console.log(`      ⏱️  Đợi 2 giây để YouTube validate...`);
+      await new Promise(r => setTimeout(r, 2000));
+      
     } else {
-      await new Promise(r => setTimeout(r, 1500));
-
-      // Chọn giờ từ dropdown list
-      const timeSelected = await page.evaluate((targetTime) => {
-        // Parse target time
-        const parts = targetTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (!parts) return { success: false, error: 'Invalid time format' };
-
-        const targetHour = parseInt(parts[1]);
-        const targetMinute = parseInt(parts[2]);
-        const targetAmPm = parts[3].toUpperCase();
-
-        // Tìm trong dropdown menu
-        const itemSelectors = [
-          'tp-yt-paper-item',
-          'ytcp-ve[role="option"]',
-          '[role="option"]',
-          '[role="menuitem"]',
-          '[class*="dropdown-item"]',
-          'paper-item'
-        ];
-
-        for (const sel of itemSelectors) {
-          const items = document.querySelectorAll(sel);
-          for (const item of items) {
-            const text = item.textContent.trim();
-
-            // Parse giờ từ item
-            const match = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-            if (match) {
-              const hour = parseInt(match[1]);
-              const minute = parseInt(match[2]);
-              const ampm = (match[3] || '').toUpperCase();
-
-              // So sánh
-              if (hour === targetHour && minute === targetMinute &&
-                (ampm === targetAmPm || !ampm)) {
-                item.click();
-                return { success: true, selector: sel, timeText: text };
-              }
-            }
-          }
-        }
-
-        // Fallback: tìm text gần đúng (chỉ so sánh giờ, bỏ qua phút nếu là :00)
-        if (targetMinute === 0) {
-          for (const sel of itemSelectors) {
-            const items = document.querySelectorAll(sel);
-            for (const item of items) {
-              const text = item.textContent.trim();
-              const match = text.match(/(\d{1,2}):00\s*(AM|PM)?/i);
-              if (match && parseInt(match[1]) === targetHour) {
-                const ampm = (match[2] || '').toUpperCase();
-                if (ampm === targetAmPm || !ampm) {
-                  item.click();
-                  return { success: true, selector: sel + '-hour-only', timeText: text };
-                }
-              }
-            }
-          }
-        }
-
-        return { success: false };
-      }, timeStr);
-
-      console.log(`   Time select result:`, timeSelected);
-
-      if (timeSelected.success) {
-        console.log(`      ✅ Đã chọn giờ: ${timeSelected.timeText}`);
-      } else {
-        console.log(`      ⚠️ Không chọn được giờ: ${timeStr}`);
-
-        // Đóng dropdown
-        await page.keyboard.press('Escape');
+      console.log(`      ⚠️ Không click được time input: ${timeInputClicked.error}`);
+      if (timeInputClicked.inputCount !== undefined) {
+        console.log(`      ℹ️  Found ${timeInputClicked.inputCount} inputs in schedule section`);
       }
     }
 
-    await new Promise(r => setTimeout(r, 1500));
     console.log('   ✅ Hoàn tất thiết lập Schedule datetime');
   }
 
