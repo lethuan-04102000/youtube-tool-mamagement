@@ -8,6 +8,13 @@ export const API_ENDPOINTS = {
     BATCH: '/api/v1/watch/video',
     BATCH_ACCOUNTS: '/api/v1/watch/batch-accounts',
   },
+  UPLOAD: {
+    DOWNLOAD_AND_UPLOAD: '/api/v1/upload/download-and-upload',
+    YOUTUBE: '/api/v1/upload/youtube',
+    DOWNLOAD: '/api/v1/upload/download',
+    DOWNLOADS: '/api/v1/upload/downloads',
+    VIDEOS: '/api/v1/upload/videos',
+  },
   AUTHENTICATOR: '/api/v1/authenticator',
   AUTHENTICATOR_RETRY: (id: number) => `/api/v1/authenticator/retry/${id}`,
 };

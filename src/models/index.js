@@ -3,8 +3,14 @@ const AccountYoutube = require('./AccountYoutube');
 const UploadedVideo = require('./UploadedVideo');
 
 // Associations
-AccountYoutube.hasMany(UploadedVideo, { foreignKey: 'account_youtube_id' });
-UploadedVideo.belongsTo(AccountYoutube, { foreignKey: 'account_youtube_id' });
+AccountYoutube.hasMany(UploadedVideo, { 
+  foreignKey: 'account_youtube_id',
+  as: 'videos'
+});
+UploadedVideo.belongsTo(AccountYoutube, { 
+  foreignKey: 'account_youtube_id',
+  as: 'account'
+});
 
 module.exports = {
   sequelize,

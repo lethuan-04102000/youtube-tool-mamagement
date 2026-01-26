@@ -1,6 +1,7 @@
 const youtubeUploadService = require('../services/youtube.upload.service');
 const VideoDownloadService = require('../services/video.download.service');
-const { AccountYoutube } = require('../models');
+const { AccountYoutube, UploadedVideo } = require('../models');
+const { Op } = require('sequelize');
 
 class UploadController {
 
@@ -166,6 +167,65 @@ class UploadController {
 
     } catch (error) {
       console.error('❌ Get downloads error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * GET /api/v1/upload/videos
+   * Lấy danh sách video đã upload lên YouTube
+   * @query { page?: number, limit?: number, search?: string }
+   */
+  async getUploadedVideos(req, res) {
+    try {
+      const { page = 1, limit = 20, search = '' } = req.query;
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+
+      // Build where clause for search
+      const whereClause = search
+        ? {
+            [Op.or]: [
+              { email: { [Op.like]: `%${search}%` } },
+              { title: { [Op.like]: `%${search}%` } },
+              { video_url: { [Op.like]: `%${search}%` } },
+              { source_url: { [Op.like]: `%${search}%` } }
+            ]
+          }
+        : {};
+
+      // Query with pagination
+      const { count, rows } = await UploadedVideo.findAndCountAll({
+        where: whereClause,
+        limit: parseInt(limit),
+        offset: offset,
+        order: [['createdAt', 'DESC']],
+        include: [
+          {
+            model: AccountYoutube,
+            as: 'account',
+            attributes: ['id', 'email', 'channel_name', 'channel_link'],
+            required: false
+          }
+        ]
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: rows,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Get uploaded videos error:', error);
       return res.status(500).json({
         success: false,
         message: 'Internal server error',
