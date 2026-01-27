@@ -9,9 +9,9 @@ import {
 } from 'lucide-react'
 
 const navigation = [
-  { name: 'Danh sách kênh', href: '/list-channels', icon: List },
+  { name: 'Danh sách kênh', href: '/channels', icon: List },
   { name: 'Tăng lượt xem', href: '/boost-views', icon: PlayCircle },
-  { name: 'Video đã tải', href: '/list-videos', icon: Video },
+  { name: 'Video đã tải', href: '/videos', icon: Video },
 ]
 
 export function Sidebar() {

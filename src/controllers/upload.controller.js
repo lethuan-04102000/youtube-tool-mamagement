@@ -93,6 +93,11 @@ class UploadController {
   /**
    * POST /api/v1/upload/download-and-upload
    * Flow hoàn chỉnh: Tải video từ URL -> Upload lên YouTube
+   * Hoặc: Upload file video từ client -> Upload lên YouTube
+   * 
+   * Hỗ trợ 2 cách:
+   * 1. Truyền sourceUrl: Tải video từ URL (Facebook, TikTok, etc.)
+   * 2. Truyền file qua multipart/form-data: Upload file trực tiếp
    */
   async downloadAndUpload(req, res) {
     try {
@@ -114,10 +119,14 @@ class UploadController {
         });
       }
 
-      if (!sourceUrl) {
+      // Kiểm tra có file upload không
+      const uploadedFile = req.file;
+      
+      // Phải có ít nhất 1 trong 2: sourceUrl hoặc file
+      if (!sourceUrl && !uploadedFile) {
         return res.status(400).json({
           success: false,
-          message: 'sourceUrl là bắt buộc (URL video TikTok, Facebook, etc.)'
+          message: 'Cần truyền sourceUrl (URL video) hoặc upload file video'
         });
       }
 
@@ -132,17 +141,76 @@ class UploadController {
         });
       }
 
-      const result = await youtubeUploadService.downloadAndUpload(
-        account.email,
-        sourceUrl,
-        { title, description, visibility, tags, scheduleDate }
-      );
+      let result;
+
+      // Trường hợp 1: Upload file từ client
+      if (uploadedFile) {
+        console.log(`\n📤 Upload file từ client: ${uploadedFile.originalname}`);
+        
+        // Lấy tên file gốc làm title mặc định (bỏ đuôi .mp4, .mov, etc.)
+        const defaultTitle = title || uploadedFile.originalname.replace(/\.[^/.]+$/, '');
+        
+        result = await youtubeUploadService.uploadVideo(
+          account.email,
+          uploadedFile.path,
+          { 
+            title: defaultTitle, 
+            description, 
+            visibility, 
+            tags, 
+            scheduleDate 
+          }
+        );
+
+        // Xóa file đã upload sau khi hoàn tất (thành công hay thất bại)
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(uploadedFile.path)) {
+            fs.unlinkSync(uploadedFile.path);
+            console.log(`🗑️  Đã xóa file upload: ${uploadedFile.filename}`);
+          }
+        } catch (err) {
+          console.error(`⚠️  Không thể xóa file upload: ${err.message}`);
+        }
+
+        // Lưu vào database nếu thành công
+        if (result.success && result.data?.videoUrl) {
+          await UploadedVideo.create({
+            account_youtube_id: account.id,
+            email: account.email,
+            video_url: result.data.videoUrl,
+            title: title || uploadedFile.originalname,
+            source_url: 'uploaded-file'
+          });
+        }
+      } 
+      // Trường hợp 2: Tải từ URL
+      else {
+        result = await youtubeUploadService.downloadAndUpload(
+          account.email,
+          sourceUrl,
+          { title, description, visibility, tags, scheduleDate }
+        );
+      }
 
       const statusCode = result.success ? 200 : 400;
       return res.status(statusCode).json(result);
 
     } catch (error) {
       console.error('❌ Download and upload controller error:', error);
+      
+      // Xóa file nếu có lỗi
+      if (req.file) {
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+          }
+        } catch (err) {
+          console.error(`⚠️  Không thể xóa file: ${err.message}`);
+        }
+      }
+
       return res.status(500).json({
         success: false,
         message: 'Internal server error',
