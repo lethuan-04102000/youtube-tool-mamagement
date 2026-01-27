@@ -23,7 +23,11 @@ export default function ListVideosPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [channels, setChannels] = useState<Account[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
+  const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url'); // Toggle between URL and File
   const [sourceUrl, setSourceUrl] = useState('');
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<'public' | 'unlisted' | 'private'>('public');
   const [scheduleDate, setScheduleDate] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -69,7 +73,11 @@ export default function ListVideosPage() {
     loadChannels();
     // Reset form
     setSelectedChannel(null);
+    setUploadMode('url');
     setSourceUrl('');
+    setVideoFile(null);
+    setTitle('');
+    setDescription('');
     setVisibility('public');
     setScheduleDate('');
     setUploadResult(null);
@@ -83,10 +91,27 @@ export default function ListVideosPage() {
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!selectedChannel || !sourceUrl) {
+    // Validate based on upload mode
+    if (!selectedChannel) {
       setUploadResult({
         success: false,
-        message: 'Vui lòng chọn kênh và nhập link video'
+        message: 'Vui lòng chọn kênh YouTube'
+      });
+      return;
+    }
+
+    if (uploadMode === 'url' && !sourceUrl) {
+      setUploadResult({
+        success: false,
+        message: 'Vui lòng nhập link video'
+      });
+      return;
+    }
+
+    if (uploadMode === 'file' && !videoFile) {
+      setUploadResult({
+        success: false,
+        message: 'Vui lòng chọn file video'
       });
       return;
     }
@@ -97,10 +122,20 @@ export default function ListVideosPage() {
     try {
       const uploadData: UploadVideoRequest = {
         id: selectedChannel,
-        sourceUrl,
         visibility,
         scheduleDate: scheduleDate || undefined,
       };
+
+      // Add title and description if provided
+      if (title) uploadData.title = title;
+      if (description) uploadData.description = description;
+
+      // Add either sourceUrl or videoFile
+      if (uploadMode === 'url') {
+        uploadData.sourceUrl = sourceUrl;
+      } else {
+        uploadData.videoFile = videoFile!;
+      }
 
       const response = await api.upload.downloadAndUpload(uploadData);
       
@@ -355,20 +390,145 @@ export default function ListVideosPage() {
                   )}
                 </div>
 
-                {/* Source Video URL */}
+                {/* Upload Mode Toggle */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Link Video
+                    Nguồn Video
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadMode('url');
+                        setVideoFile(null);
+                      }}
+                      className={`px-3 py-2 rounded-md border text-xs font-medium transition-colors ${
+                        uploadMode === 'url'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                      }`}
+                    >
+                      🔗 Từ URL
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadMode('file');
+                        setSourceUrl('');
+                      }}
+                      className={`px-3 py-2 rounded-md border text-xs font-medium transition-colors ${
+                        uploadMode === 'file'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                      }`}
+                    >
+                      📁 Từ File
+                    </button>
+                  </div>
+                </div>
+
+                {/* Source Video URL (only show if mode is 'url') */}
+                {uploadMode === 'url' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Link Video
+                    </label>
+                    <input
+                      type="url"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      placeholder="https://www.facebook.com/reel/..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      required={uploadMode === 'url'}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Facebook, TikTok, Instagram, Google Drive, etc.</p>
+                  </div>
+                )}
+
+                {/* Video File Upload (only show if mode is 'file') */}
+                {uploadMode === 'file' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Chọn File Video
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <label className="flex-1 cursor-pointer">
+                        <div className={`px-3 py-2 border-2 border-dashed rounded-md text-center transition-colors ${
+                          videoFile 
+                            ? 'border-green-400 bg-green-50' 
+                            : 'border-gray-300 hover:border-blue-400 bg-gray-50'
+                        }`}>
+                          <input
+                            type="file"
+                            accept="video/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setVideoFile(file);
+                                // Auto-fill title from filename if empty
+                                if (!title) {
+                                  setTitle(file.name.replace(/\.[^/.]+$/, ''));
+                                }
+                              }
+                            }}
+                            className="hidden"
+                            required={uploadMode === 'file'}
+                          />
+                          {videoFile ? (
+                            <div className="text-xs">
+                              <p className="font-medium text-green-700">✓ {videoFile.name}</p>
+                              <p className="text-gray-500 mt-0.5">
+                                {(videoFile.size / (1024 * 1024)).toFixed(2)} MB
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">
+                              <p>📤 Click để chọn file</p>
+                              <p className="mt-0.5">MP4, MOV, AVI, etc.</p>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                      {videoFile && (
+                        <button
+                          type="button"
+                          onClick={() => setVideoFile(null)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
+                          title="Xóa file"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Title (optional, but auto-filled for file uploads) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Tiêu đề (tùy chọn)
                   </label>
                   <input
-                    type="url"
-                    value={sourceUrl}
-                    onChange={(e) => setSourceUrl(e.target.value)}
-                    placeholder="https://www.facebook.com/reel/..."
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder={uploadMode === 'file' ? 'Tự động lấy từ tên file' : 'Tự động lấy từ video nguồn'}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    required
                   />
-                  <p className="text-xs text-gray-500 mt-1">Facebook, TikTok, Instagram, etc.</p>
+                </div>
+
+                {/* Description (optional) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Mô tả (tùy chọn)
+                  </label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Mô tả video..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm resize-none"
+                  />
                 </div>
 
                 {/* Visibility */}
@@ -416,18 +576,18 @@ export default function ListVideosPage() {
                 {/* Submit Button */}
                 <button
                   type="submit"
-                  disabled={uploading || !selectedChannel || !sourceUrl}
+                  disabled={uploading || !selectedChannel || (uploadMode === 'url' ? !sourceUrl : !videoFile)}
                   className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-md font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center text-sm"
                 >
                   {uploading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      Đang xử lý...
+                      {uploadMode === 'file' ? 'Đang upload...' : 'Đang xử lý...'}
                     </>
                   ) : (
                     <>
                       <Upload className="w-4 h-4 mr-2" />
-                      Upload Video
+                      Upload lên YouTube
                     </>
                   )}
                 </button>
