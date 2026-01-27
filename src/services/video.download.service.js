@@ -391,6 +391,27 @@ class VideoDownloadService {
         size: fs.statSync(path.join(this.downloadDir, file)).size
       }));
   }
+
+  /**
+   * Xóa file video đã download
+   * @param {string} filePath - Đường dẫn file cần xóa
+   * @returns {boolean} - true nếu xóa thành công, false nếu thất bại
+   */
+  deleteDownloadedFile(filePath) {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`🗑️  Đã xóa file: ${path.basename(filePath)}`);
+        return true;
+      } else {
+        console.log(`⚠️  File không tồn tại: ${filePath}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ Lỗi khi xóa file ${filePath}: ${error.message}`);
+      return false;
+    }
+  }
 }
 
 module.exports = VideoDownloadService;

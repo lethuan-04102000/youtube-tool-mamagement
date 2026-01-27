@@ -1916,6 +1916,13 @@ class YoutubeUploadService {
           });
           console.log('✅ Đã lưu video URL vào database');
         }
+
+        // Xóa file video đã tải về sau khi upload thành công
+        console.log('\n🗑️  BƯỚC 3: XÓA FILE ĐÃ TẢI...\n');
+        const deleted = videoDownloadService.deleteDownloadedFile(videoPath);
+        if (deleted) {
+          console.log('✅ Đã xóa file video khỏi ổ cứng');
+        }
       }
 
       return {

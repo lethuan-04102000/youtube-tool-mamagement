@@ -68,7 +68,8 @@ export interface RetryVerifyResponse {
 export interface UploadVideoRequest {
   id?: number;
   email?: string;
-  sourceUrl: string;
+  sourceUrl?: string; // Optional when uploading file
+  videoFile?: File; // For direct file upload
   title?: string;
   description?: string;
   visibility?: 'public' | 'unlisted' | 'private';
@@ -216,7 +217,34 @@ export const accountsAPI = {
 // Upload API
 export const uploadAPI = {
   // Download video from URL and upload to YouTube
-  downloadAndUpload: (data: UploadVideoRequest): Promise<UploadVideoResponse> => {
+  downloadAndUpload: async (data: UploadVideoRequest): Promise<UploadVideoResponse> => {
+    // If uploading a file, use FormData
+    if (data.videoFile) {
+      const formData = new FormData();
+      if (data.id) formData.append('id', data.id.toString());
+      if (data.email) formData.append('email', data.email);
+      formData.append('videoFile', data.videoFile);
+      if (data.title) formData.append('title', data.title);
+      if (data.description) formData.append('description', data.description);
+      if (data.visibility) formData.append('visibility', data.visibility);
+      if (data.scheduleDate) formData.append('scheduleDate', data.scheduleDate);
+      if (data.tags) formData.append('tags', JSON.stringify(data.tags));
+
+      const url = buildApiUrl(API_ENDPOINTS.UPLOAD.DOWNLOAD_AND_UPLOAD);
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+        throw new Error(error.message || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    // Otherwise, use JSON for URL-based download
     return request<UploadVideoResponse>(API_ENDPOINTS.UPLOAD.DOWNLOAD_AND_UPLOAD, {
       method: 'POST',
       body: JSON.stringify(data),

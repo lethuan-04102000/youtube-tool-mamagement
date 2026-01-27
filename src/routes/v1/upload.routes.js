@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const uploadController = require('../../controllers/upload.controller');
+const uploadVideo = require('../../middlewares/upload.video');
 
 /**
  * @route POST /api/v1/upload/download
@@ -18,10 +19,20 @@ router.post('/youtube', uploadController.uploadToYoutube);
 
 /**
  * @route POST /api/v1/upload/download-and-upload
- * @desc Flow hoàn chỉnh: Download từ URL -> Upload lên YouTube
- * @body { id?: number, email?: string, sourceUrl: string, title?: string, description?: string, visibility?: 'public' | 'unlisted' | 'private', tags?: string[], scheduleDate?: string (ISO format: '2024-01-15T10:00:00') }
+ * @desc Flow hoàn chỉnh: Download từ URL -> Upload lên YouTube HOẶC Upload file từ client -> Upload lên YouTube
+ * @multipart form-data:
+ *   - video: file (optional) - File video upload từ client
+ *   - id: number (optional) - ID của account
+ *   - email: string (optional) - Email của account (cần id hoặc email)
+ *   - sourceUrl: string (optional) - URL video để download (Facebook, TikTok, etc.)
+ *   - title: string (optional) - Tiêu đề video
+ *   - description: string (optional) - Mô tả video
+ *   - visibility: string (optional) - 'public' | 'unlisted' | 'private' (default: 'public')
+ *   - tags: string[] (optional) - Tags cho video
+ *   - scheduleDate: string (optional) - ISO format: '2024-01-15T10:00:00'
+ * @note Phải truyền ít nhất 1 trong 2: sourceUrl hoặc file video
  */
-router.post('/download-and-upload', uploadController.downloadAndUpload);
+router.post('/download-and-upload', uploadVideo.single('video'), uploadController.downloadAndUpload);
 
 /**
  * @route GET /api/v1/upload/downloads
