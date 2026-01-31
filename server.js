@@ -2,11 +2,15 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cron = require('node-cron');
 const automationService = require('./services/automationService');
+const facebookReelRoutes = require('./src/routes/facebook.reel.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
+
+// Đăng ký route facebook.reel.routes.js vào app Express
+app.use('/api/v1/facebook', facebookReelRoutes);
 
 // API endpoint để trigger automation manually
 app.post('/api/automation/click-action', async (req, res) => {
