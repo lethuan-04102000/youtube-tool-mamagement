@@ -27,8 +27,9 @@ class CsvService {
     const emailIndex = headerParts.findIndex(h => h.includes('email'));
     const passwordIndex = headerParts.findIndex(h => h.includes('password'));
     const channelNameIndex = headerParts.findIndex(h => h.includes('channel'));
+    const avatarUrlIndex = headerParts.findIndex(h => h.includes('avatar'));
     
-    console.log(`📊 Column indices: email=${emailIndex}, password=${passwordIndex}, channel=${channelNameIndex}\n`);
+    console.log(`📊 Column indices: email=${emailIndex}, password=${passwordIndex}, channel=${channelNameIndex}, avatar_url=${avatarUrlIndex}\n`);
     
     let totalCount = 0;
     let validCount = 0;
@@ -40,6 +41,7 @@ class CsvService {
         const email = parts[emailIndex]?.trim();
         const password = parts[passwordIndex]?.trim();
         const channelName = channelNameIndex >= 0 ? parts[channelNameIndex]?.trim() : '';
+        const avatarUrl = avatarUrlIndex >= 0 ? parts[avatarUrlIndex]?.trim() : '';
         
         if (email && password) {
           totalCount++;
@@ -49,6 +51,7 @@ class CsvService {
             email, 
             password, 
             channel_name: channelName || '',
+            avatar_url: avatarUrl || null,
             authenticator: '' // Empty, will be filled after setup
           });
         }

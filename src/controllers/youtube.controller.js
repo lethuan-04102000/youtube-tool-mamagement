@@ -2,7 +2,9 @@ const { AccountYoutube } = require('../models');
 const browserService = require('../services/browser.service');
 const googleAuthService = require('../services/google.auth.service');
 const youtubeService = require('../services/youtube.service');
+const facebDownloader = require('../services/faceb.downloader.service');
 const { fileHelper } = require('../helpers');
+const path = require('path');
 
 class YoutubeController {
   
@@ -76,7 +78,7 @@ class YoutubeController {
           is_create_channel: true,
           channel_link: { [Op.ne]: null },
           is_upload_avatar: false,
-          index_avatar: { [Op.ne]: null }
+          avatar_url: { [Op.ne]: null }
         }
       });
 
@@ -178,17 +180,23 @@ async function createChannelForAccount(account) {
     let avatarUploaded = false;
     let avatarName = '';
     
-    if (channelInfo.link && account.index_avatar) {
+    if (channelInfo.link && account.avatar_url) {
       try {
-        console.log('\n🖼️  Đang upload avatar...');
+        console.log('\n🖼️  Đang download và upload avatar...');
         
-        // Get avatar file path using helper
-        const avatarPath = fileHelper.getAvatarByIndex(account.index_avatar);
+        // Download avatar from Facebook
+        const avatarsDir = path.join(__dirname, '../../avatars');
+        const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
+        const avatarPath = await facebDownloader.downloadAvatar(
+          account.avatar_url,
+          avatarsDir,
+          fileName
+        );
         
         if (!avatarPath) {
-          console.log(`⚠️  Không tìm thấy avatar với index ${account.index_avatar}`);
+          console.log(`⚠️  Không thể download avatar từ ${account.avatar_url}`);
         } else {
-          console.log(`📸 Using avatar[${account.index_avatar}]: ${avatarPath}`);
+          console.log(`📸 Downloaded avatar to: ${avatarPath}`);
           
           // Extract channel ID using helper
           const channelId = fileHelper.extractChannelId(channelInfo.link);
@@ -210,10 +218,10 @@ async function createChannelForAccount(account) {
           }
         }
       } catch (avatarError) {
-        console.error('⚠️  Lỗi upload avatar:', avatarError.message);
+        console.error('⚠️  Lỗi download/upload avatar:', avatarError.message);
       }
-    } else if (channelInfo.link && !account.index_avatar) {
-      console.log('⚠️  Account không có index_avatar, bỏ qua upload avatar');
+    } else if (channelInfo.link && !account.avatar_url) {
+      console.log('⚠️  Account không có avatar_url, bỏ qua upload avatar');
     }
 
     await googleAuthService.logout(page);
@@ -268,18 +276,25 @@ async function uploadAvatarForAccount(account) {
     // Login
     await googleAuthService.login(page, account.email, account.password);
 
-    if (!account.index_avatar) {
-      throw new Error('Account không có index_avatar');
+    if (!account.avatar_url) {
+      throw new Error('Account không có avatar_url');
     }
     
-    // Get avatar file path using helper
-    const avatarPath = fileHelper.getAvatarByIndex(account.index_avatar);
+    // Download avatar from Facebook
+    console.log(`📥 Downloading avatar from: ${account.avatar_url}`);
+    const avatarsDir = path.join(__dirname, '../../avatars');
+    const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
+    const avatarPath = await facebookAvatarDownloader.downloadAvatar(
+      account.avatar_url,
+      avatarsDir,
+      fileName
+    );
     
     if (!avatarPath) {
-      throw new Error(`Không tìm thấy avatar với index ${account.index_avatar}`);
+      throw new Error(`Không thể download avatar từ ${account.avatar_url}`);
     }
     
-    console.log(`📸 Using avatar[${account.index_avatar}]: ${avatarPath}`);
+    console.log(`📸 Downloaded avatar to: ${avatarPath}`);
 
     // Upload avatar
     await youtubeService.uploadAvatar(page, channelId, avatarPath);
@@ -300,8 +315,7 @@ async function uploadAvatarForAccount(account) {
       email: account.email,
       success: true,
       channelId,
-      avatar: avatarPath.split('/').pop(),
-      avatarIndex: account.index_avatar
+      avatar: avatarPath.split('/').pop()
     };
 
   } catch (error) {

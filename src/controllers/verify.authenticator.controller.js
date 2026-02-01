@@ -4,7 +4,7 @@ const googleAuthService = require('../services/google.auth.service');
 const authenticatorService = require('../services/authenticator.service');
 const youtubeService = require('../services/youtube.service');
 const csvService = require('../services/csv.service');
-const AdmZip = require('adm-zip');
+const facebDownloader = require('../services/faceb.downloader.service');
 const fs = require('fs');
 const path = require('path');
 
@@ -13,7 +13,6 @@ class VerifyAuthenticatorController {
   async autoSetup2FA(req, res) {
     let browser = null;
     let csvPath = null;
-    let avatarFolderName = null;
     let accounts = [];
     
     try {
@@ -21,36 +20,6 @@ class VerifyAuthenticatorController {
       if (req.files && req.files.file) {
         // MODE 1: Upload CSV file - Import new accounts
         console.log('📁 Mode: Import from CSV file\n');
-        
-        // Check for avatar zip file
-        let avatarZipPath = null;
-        if (req.files.avatars) {
-          avatarZipPath = req.files.avatars[0].path;
-          console.log('📦 Avatar ZIP:', avatarZipPath);
-
-          // Unzip avatars
-          try {
-            const zip = new AdmZip(avatarZipPath);
-            const avatarsDir = path.join(__dirname, '../../avatars');
-            
-            // Extract folder name from zip (first entry folder name)
-            const zipEntries = zip.getEntries();
-            const firstFolder = zipEntries.find(entry => entry.isDirectory);
-            if (firstFolder) {
-              avatarFolderName = firstFolder.entryName.replace(/\/$/, '');
-              console.log(`📁 Avatar folder: ${avatarFolderName}`);
-            }
-
-            // Extract to avatars directory
-            zip.extractAllTo(avatarsDir, true);
-            console.log('✅ Extracted avatars to:', avatarsDir);
-
-            // Clean up zip file
-            fs.unlinkSync(avatarZipPath);
-          } catch (zipError) {
-            console.error('❌ Error extracting avatars:', zipError.message);
-          }
-        }
 
         csvPath = req.files.file[0].path;
         console.log('📁 CSV Path:', csvPath);
@@ -66,12 +35,6 @@ class VerifyAuthenticatorController {
 
         console.log('💾 Đang lưu accounts vào database...\n');
         
-        // Get max index_avatar from database to continue incrementing
-        const maxIndexResult = await AccountYoutube.max('index_avatar');
-        let nextIndexAvatar = (maxIndexResult || 0) + 1;
-        
-        console.log(`📊 Starting index_avatar from: ${nextIndexAvatar}\n`);
-        
         for (let i = 0; i < accounts.length; i++) {
           const account = accounts[i];
           
@@ -82,24 +45,44 @@ class VerifyAuthenticatorController {
                 email: account.email,
                 password: account.password,
                 channel_name: account.channel_name,
+                avatar_url: account.avatar_url || null, // Save avatar_url from CSV
                 code_authenticators: null,
-                is_authenticator: false,
-                folder_avatar: avatarFolderName, // Save avatar folder name
-                index_avatar: nextIndexAvatar // Assign incrementing index
+                is_authenticator: false
               }
             });
             
             if (created) {
-              console.log(`  [${nextIndexAvatar}] ${account.email} - NEW - index_avatar: ${nextIndexAvatar}`);
-              nextIndexAvatar++; // Only increment if new record was created
+              console.log(`  ✅ ${account.email} - NEW`);
             } else {
-              console.log(`  [${accountRecord.index_avatar}] ${account.email} - EXISTS - index_avatar: ${accountRecord.index_avatar}`);
+              console.log(`  ℹ️  ${account.email} - EXISTS`);
+              
+              // Update avatar_url if provided in CSV and not already set
+              if (account.avatar_url && !accountRecord.avatar_url) {
+                await AccountYoutube.update(
+                  { avatar_url: account.avatar_url },
+                  { where: { email: account.email } }
+                );
+                console.log(`     📥 Updated avatar_url for ${account.email}`);
+              }
             }
           } catch (error) {
             console.error(`❌ Lỗi lưu ${account.email}:`, error.message);
           }
         }
         console.log('✅ Đã lưu tất cả accounts vào database\n');
+        
+        // Download avatars from Facebook if avatar_url exists
+        const accountsWithAvatarUrl = accounts.filter(acc => acc.avatar_url);
+        if (accountsWithAvatarUrl.length > 0) {
+          console.log(`\n📥 Downloading ${accountsWithAvatarUrl.length} avatars from Facebook...\n`);
+          const avatarsDir = path.join(__dirname, '../../avatars');
+          const downloadResults = await facebDownloader.downloadMultipleAvatars(
+            accountsWithAvatarUrl, 
+            avatarsDir
+          );
+          const successCount = downloadResults.filter(r => r.success).length;
+          console.log(`\n✅ Downloaded ${successCount}/${accountsWithAvatarUrl.length} avatars successfully\n`);
+        }
 
       } else {
         // MODE 2: No CSV - Retry failed accounts from database
@@ -114,9 +97,13 @@ class VerifyAuthenticatorController {
               // Accounts with 2FA but no channel
               {
                 is_authenticator: true,
-                [Op.or]: [
-                  { is_create_channel: false },
-                ]
+                is_create_channel: false
+              },
+              // Accounts with channel but no avatar
+              {
+                is_authenticator: true,
+                is_create_channel: true,
+                is_upload_avatar: false
               }
             ]
           },
@@ -154,8 +141,17 @@ class VerifyAuthenticatorController {
         accounts = uniqueAccounts.map(acc => ({
           email: acc.email,
           password: acc.password,
-          channel_name: acc.channel_name
+          channel_name: acc.channel_name,
+          avatar_url: acc.avatar_url  // Include avatar_url from DB
         }));
+        
+        // Debug: Log accounts with their avatar_url status
+        console.log(`📋 Accounts from DB:`);
+        accounts.forEach((acc, idx) => {
+          console.log(`  [${idx + 1}] ${acc.email}`);
+          console.log(`      avatar_url: ${acc.avatar_url || 'NULL'}`);
+        });
+        console.log('');
       }
 
       // Filter and prepare accounts for processing
@@ -173,18 +169,18 @@ class VerifyAuthenticatorController {
           where: { email: account.email }
         });
         
-        // Skip if account has both authenticator AND channel (only check flags, not channel_link)
+        // Skip if account has authenticator, channel AND avatar uploaded
         if (existingAccount && 
             existingAccount.is_authenticator === true && 
-            existingAccount.is_create_channel === true) {
-          console.log(`⏭️  Skip: ${account.email} (đã có Authenticator và Channel)\n`);
+            existingAccount.is_create_channel === true &&
+            existingAccount.is_upload_avatar === true) {
+          console.log(`⏭️  Skip: ${account.email} (đã có Authenticator, Channel và Avatar)\n`);
           continue;
         }
         
-        // Use existing folder_avatar and index_avatar from DB if available
+        // Use existing avatar_url from DB if available
         if (existingAccount) {
-          account.folder_avatar = existingAccount.folder_avatar;
-          account.index_avatar = existingAccount.index_avatar;
+          account.avatar_url = existingAccount.avatar_url;
         }
         
         accountsToProcess.push(account);
@@ -194,7 +190,7 @@ class VerifyAuthenticatorController {
       if (accountsToProcess.length === 0) {
         return res.json({
           success: true,
-          message: 'All accounts already have authenticator and channel',
+          message: 'All accounts already have authenticator, channel and avatar',
           data: [],
           summary: {
             total: accounts.length,
@@ -219,10 +215,7 @@ class VerifyAuthenticatorController {
         
         const batchResults = await Promise.all(
           batch.map(account => {
-            // Use folder_avatar and index_avatar from account (either from CSV or DB)
-            const folderAvatar = account.folder_avatar || avatarFolderName;
-            const indexAvatar = account.index_avatar || (accounts.findIndex(a => a.email === account.email) + 1);
-            return setupSingleAccountWithBrowser(account, folderAvatar, indexAvatar);
+            return setupSingleAccountWithBrowser(account);
           })
         );
         
@@ -321,7 +314,7 @@ class VerifyAuthenticatorController {
       console.log(`   channel_name: "${accountData.channel_name}"`);
 
       // Process with existing function
-      const result = await setupSingleAccountWithBrowser(accountData, account.folder_avatar, account.index_avatar);
+      const result = await setupSingleAccountWithBrowser(accountData);
 
       // Refetch account from database to get latest status
       const updatedAccount = await AccountYoutube.findByPk(id);
@@ -370,17 +363,17 @@ class VerifyAuthenticatorController {
 }
 
 // Setup single account with its own browser instance
-async function setupSingleAccountWithBrowser(account, avatarFolderName, indexAvatar) {
+async function setupSingleAccountWithBrowser(account) {
   let browser = null;
   
   try {
-    console.log(`\n🌐 [${account.email}] [Index: ${indexAvatar}] Launching browser...`);
+    console.log(`\n🌐 [${account.email}] Launching browser...`);
     
     // Use HEADLESS_AUTHENTICATOR for authenticator setup
     const headless = process.env.HEADLESS_AUTHENTICATOR === 'true';
     browser = await browserService.launchBrowser(headless);
     
-    const result = await setupSingleAccount(browser, account, avatarFolderName, indexAvatar);
+    const result = await setupSingleAccount(browser, account);
     
     await browser.close();
     console.log(`✅ [${account.email}] Browser closed`);
@@ -407,7 +400,7 @@ async function setupSingleAccountWithBrowser(account, avatarFolderName, indexAva
   }
 }
 
-async function setupSingleAccount(browser, account, avatarFolderName, indexAvatar) {
+async function setupSingleAccount(browser, account) {
   const page = await browserService.createPage(browser);
   
   try {
@@ -505,8 +498,6 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
           code_authenticators: secretKey,
           channel_name: account.channel_name,
           is_authenticator: true,
-          folder_avatar: avatarFolderName,
-          index_avatar: indexAvatar,
           last_login_at: new Date()
         },
         { where: { email: account.email } }
@@ -520,8 +511,6 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
           code_authenticators: secretKey,
           channel_name: account.channel_name,
           is_authenticator: true,
-          folder_avatar: avatarFolderName,
-          index_avatar: indexAvatar,
           last_login_at: new Date()
         });
       }
@@ -575,60 +564,42 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
         await AccountYoutube.update(channelUpdateData, { where: { email: account.email } });
         console.log('💾 Đã lưu thông tin channel vào database');
 
-        // Upload avatar if index_avatar is available
-        if (channelInfo.link && indexAvatar) {
+        // Upload avatar chỉ nếu có avatar_url
+        if (channelInfo.link && account.avatar_url) {
           try {
-            console.log('\n🖼️  Đang upload avatar...');
+            console.log('\n🖼️  Đang download và upload avatar từ Facebook...');
+            console.log('📥 Avatar URL:', account.avatar_url);
             
-            // Get all avatar files from avatars folder
+            // Download avatar từ Facebook
             const avatarsDir = path.join(__dirname, '../../avatars');
-            const avatarFiles = fs.readdirSync(avatarsDir)
-              .filter(file => {
-                const ext = path.extname(file).toLowerCase();
-                return ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext);
-              })
-              .sort((a, b) => {
-                // Sort by number in filename (avatar_1.png, avatar_2.png, etc)
-                const numA = parseInt(a.match(/\d+/)?.[0] || '0');
-                const numB = parseInt(b.match(/\d+/)?.[0] || '0');
-                return numA - numB;
-              });
+            const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
+            const avatarPath = await facebDownloader.downloadAvatar(
+              account.avatar_url, 
+              avatarsDir, 
+              fileName
+            );
             
-            if (avatarFiles.length === 0) {
-              console.log('⚠️  Không có avatar trong folder avatars');
-            } else {
-              // Use index_avatar to select image (index starts from 1)
-              const avatarIndex = indexAvatar - 1; // Convert to 0-based index
+            // Upload lên YouTube
+            const channelIdMatch = channelInfo.link.match(/channel\/([^\/?]+)/);
+            if (channelIdMatch) {
+              const channelId = channelIdMatch[1];
+              await youtubeService.uploadAvatar(page, channelId, avatarPath);
+              avatarUploaded = true;
+              avatarName = path.basename(avatarPath);
               
-              if (avatarIndex >= 0 && avatarIndex < avatarFiles.length) {
-                const selectedAvatar = avatarFiles[avatarIndex];
-                const imagePath = path.join(avatarsDir, selectedAvatar);
-                
-                console.log(`📸 Using avatar[${indexAvatar}]: ${selectedAvatar}`);
-                
-                // Extract channel ID
-                const channelIdMatch = channelInfo.link.match(/channel\/([^\/\?]+)/);
-                if (channelIdMatch) {
-                  const channelId = channelIdMatch[1];
-                  await youtubeService.uploadAvatar(page, channelId, imagePath);
-                  avatarUploaded = true;
-                  avatarName = selectedAvatar;
-                  
-                  // Mark avatar as uploaded
-                  await AccountYoutube.update(
-                    { is_upload_avatar: true },
-                    { where: { email: account.email } }
-                  );
-                  
-                  console.log('✅ Đã upload avatar');
-                }
-              } else {
-                console.log(`⚠️  index_avatar ${indexAvatar} vượt quá số lượng avatar (${avatarFiles.length})`);
-              }
+              // Mark avatar as uploaded
+              await AccountYoutube.update(
+                { is_upload_avatar: true },
+                { where: { email: account.email } }
+              );
+              
+              console.log('✅ Đã upload avatar từ link Facebook');
             }
           } catch (avatarError) {
-            console.error('⚠️  Lỗi upload avatar:', avatarError.message);
+            console.error('⚠️  Lỗi download/upload avatar:', avatarError.message);
           }
+        } else if (channelInfo.link && !account.avatar_url) {
+          console.log('⚠️  Không có avatar_url, bỏ qua upload avatar');
         }
 
       } catch (channelError) {
@@ -641,9 +612,53 @@ async function setupSingleAccount(browser, account, avatarFolderName, indexAvata
       console.log('✅ Account đã có channel, skip tạo channel');
       channelInfo.link = accountAfterAuth.channel_link;
       channelInfo.name = accountAfterAuth.channel_name;
+      
+      // Debug avatar info
+      console.log(`🔍 Avatar check:`);
+      console.log(`   is_upload_avatar: ${accountAfterAuth.is_upload_avatar}`);
+      console.log(`   avatar_url: ${account.avatar_url || 'NULL'}`);
+      console.log(`   channel_link: ${channelInfo.link ? 'EXISTS' : 'NULL'}`);
+      
+      // Nếu đã có channel nhưng chưa upload avatar và có avatar_url thì upload
+      if (!accountAfterAuth.is_upload_avatar && account.avatar_url && channelInfo.link) {
+        try {
+          console.log('\n🖼️  Channel đã có nhưng chưa upload avatar, đang download và upload...');
+          console.log('📥 Avatar URL:', account.avatar_url);
+          
+          // Download avatar từ Facebook
+          const avatarsDir = path.join(__dirname, '../../avatars');
+          const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
+          const avatarPath = await facebDownloader.downloadAvatar(
+            account.avatar_url, 
+            avatarsDir, 
+            fileName
+          );
+          
+          // Upload lên YouTube
+          const channelIdMatch = channelInfo.link.match(/channel\/([^\/?]+)/);
+          if (channelIdMatch) {
+            const channelId = channelIdMatch[1];
+            await youtubeService.uploadAvatar(page, channelId, avatarPath);
+            avatarUploaded = true;
+            avatarName = path.basename(avatarPath);
+            
+            // Mark avatar as uploaded
+            await AccountYoutube.update(
+              { is_upload_avatar: true },
+              { where: { email: account.email } }
+            );
+            
+            console.log('✅ Đã upload avatar cho channel có sẵn');
+            
+            // Xoá file sau khi upload (tuỳ chọn)
+            // fs.unlinkSync(avatarPath);
+          }
+        } catch (avatarError) {
+          console.error('⚠️  Lỗi download/upload avatar cho channel có sẵn:', avatarError.message);
+        }
+      }
     }
 
-    console.log(`📊 Index Avatar: ${indexAvatar}`);
     console.log('🎉 Setup hoàn tất!');
 
     await googleAuthService.logout(page);

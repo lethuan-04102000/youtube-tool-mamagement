@@ -7,11 +7,6 @@ const AccountYoutube = sequelize.define('AccountYoutube', {
     primaryKey: true,
     autoIncrement: true
   },
-  index_avatar: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    comment: 'index of avatar in the folder_avatar'
-  },
   email: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -58,10 +53,10 @@ const AccountYoutube = sequelize.define('AccountYoutube', {
     defaultValue: false,
     comment: 'Whether avatar has been uploaded'
   },
-  folder_avatar: {
-    type: DataTypes.STRING,
+  avatar_url: {
+    type: DataTypes.STRING(500),
     allowNull: true,
-    comment: 'Avatar folder name used for this account'
+    comment: 'Facebook avatar URL to download'
   },
   last_login_at: {
     type: DataTypes.DATE,
