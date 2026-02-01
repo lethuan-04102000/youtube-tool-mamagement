@@ -24,11 +24,13 @@ class CsvService {
     console.log(`🔍 Delimiter: ${delimiter === '\t' ? 'TAB' : 'COMMA'}`);
     
     const headerParts = header.split(delimiter);
-    const emailIndex = headerParts.findIndex(h => h.includes('email'));
+    const emailIndex = headerParts.findIndex(h => h.includes('email') && !h.includes('recovery'));
     const passwordIndex = headerParts.findIndex(h => h.includes('password'));
     const channelNameIndex = headerParts.findIndex(h => h.includes('channel'));
+    const avatarUrlIndex = headerParts.findIndex(h => h.includes('avatar'));
+    const recoveryEmailIndex = headerParts.findIndex(h => h.includes('recovery'));
     
-    console.log(`📊 Column indices: email=${emailIndex}, password=${passwordIndex}, channel=${channelNameIndex}\n`);
+    console.log(`📊 Column indices: email=${emailIndex}, password=${passwordIndex}, channel=${channelNameIndex}, avatar_url=${avatarUrlIndex}, recovery_email=${recoveryEmailIndex}\n`);
     
     let totalCount = 0;
     let validCount = 0;
@@ -40,6 +42,8 @@ class CsvService {
         const email = parts[emailIndex]?.trim();
         const password = parts[passwordIndex]?.trim();
         const channelName = channelNameIndex >= 0 ? parts[channelNameIndex]?.trim() : '';
+        const avatarUrl = avatarUrlIndex >= 0 ? parts[avatarUrlIndex]?.trim() : '';
+        const recoveryEmail = recoveryEmailIndex >= 0 ? parts[recoveryEmailIndex]?.trim() : '';
         
         if (email && password) {
           totalCount++;
@@ -49,6 +53,8 @@ class CsvService {
             email, 
             password, 
             channel_name: channelName || '',
+            avatar_url: avatarUrl || null,
+            recovery_email: recoveryEmail || null,
             authenticator: '' // Empty, will be filled after setup
           });
         }

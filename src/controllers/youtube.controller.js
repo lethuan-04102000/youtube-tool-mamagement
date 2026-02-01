@@ -2,7 +2,9 @@ const { AccountYoutube } = require('../models');
 const browserService = require('../services/browser.service');
 const googleAuthService = require('../services/google.auth.service');
 const youtubeService = require('../services/youtube.service');
+const facebDownloader = require('../services/faceb.downloader.service');
 const { fileHelper } = require('../helpers');
+const path = require('path');
 
 class YoutubeController {
   
@@ -69,14 +71,14 @@ class YoutubeController {
 
   async uploadAvatars(req, res) {
     try {
-      // Get accounts that have channels and haven't uploaded avatar yet
+      // Get accounts that have channels, avatar_url, and haven't uploaded avatar yet
       const { Op } = require('sequelize');
       const accounts = await AccountYoutube.findAll({
         where: {
           is_create_channel: true,
           channel_link: { [Op.ne]: null },
           is_upload_avatar: false,
-          index_avatar: { [Op.ne]: null }
+          avatar_url: { [Op.ne]: null } // Must have avatar_url
         }
       });
 
@@ -174,47 +176,8 @@ async function createChannelForAccount(account) {
     console.log(`💾 [${account.email}] Đã lưu thông tin channel vào database`);
     console.log(`📝 Tên channel thực tế: "${actualChannelName}"`);
 
-    // Upload avatar if channel was created successfully
-    let avatarUploaded = false;
-    let avatarName = '';
-    
-    if (channelInfo.link && account.index_avatar) {
-      try {
-        console.log('\n🖼️  Đang upload avatar...');
-        
-        // Get avatar file path using helper
-        const avatarPath = fileHelper.getAvatarByIndex(account.index_avatar);
-        
-        if (!avatarPath) {
-          console.log(`⚠️  Không tìm thấy avatar với index ${account.index_avatar}`);
-        } else {
-          console.log(`📸 Using avatar[${account.index_avatar}]: ${avatarPath}`);
-          
-          // Extract channel ID using helper
-          const channelId = fileHelper.extractChannelId(channelInfo.link);
-          
-          if (channelId) {
-            await youtubeService.uploadAvatar(page, channelId, avatarPath);
-            avatarUploaded = true;
-            avatarName = avatarPath.split('/').pop();
-            
-            // Mark avatar as uploaded
-            await AccountYoutube.update(
-              { is_upload_avatar: true },
-              { where: { id: account.id } }
-            );
-            
-            console.log('✅ Đã upload avatar');
-          } else {
-            console.log('⚠️  Không thể extract channel ID từ link');
-          }
-        }
-      } catch (avatarError) {
-        console.error('⚠️  Lỗi upload avatar:', avatarError.message);
-      }
-    } else if (channelInfo.link && !account.index_avatar) {
-      console.log('⚠️  Account không có index_avatar, bỏ qua upload avatar');
-    }
+    // Avatar upload is now a separate step - use POST /api/v1/youtube/upload-avatar
+    console.log('ℹ️  Avatar upload is a separate step. Download avatars first, then upload.');
 
     await googleAuthService.logout(page);
     await browser.close();
@@ -224,9 +187,7 @@ async function createChannelForAccount(account) {
       email: account.email,
       success: true,
       channelName: actualChannelName,
-      channelLink: channelInfo.link,
-      avatarUploaded,
-      avatar: avatarName
+      channelLink: channelInfo.link
     };
 
   } catch (error) {
@@ -268,20 +229,38 @@ async function uploadAvatarForAccount(account) {
     // Login
     await googleAuthService.login(page, account.email, account.password);
 
-    if (!account.index_avatar) {
-      throw new Error('Account không có index_avatar');
+    const avatarsDir = path.join(__dirname, '../../avatars');
+    const fs = require('fs');
+    let avatarPath = null;
+    let imageName = account.image_name;
+    
+    // Check if avatar already downloaded
+    if (account.image_name && fs.existsSync(path.join(avatarsDir, account.image_name))) {
+      // Use existing file
+      avatarPath = path.join(avatarsDir, account.image_name);
+      console.log(`📸 Using downloaded avatar: ${account.image_name}`);
+    } else if (account.avatar_url) {
+      // Download now
+      console.log(`📥 Downloading avatar from: ${account.avatar_url}`);
+      const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
+      avatarPath = await facebDownloader.downloadAvatar(
+        account.avatar_url,
+        avatarsDir,
+        fileName
+      );
+      imageName = path.basename(avatarPath);
+      
+      // Save image_name to DB
+      await AccountYoutube.update(
+        { image_name: imageName },
+        { where: { id: account.id } }
+      );
+      console.log(`� Saved image_name: ${imageName}`);
+    } else {
+      throw new Error('No avatar_url or image_name available');
     }
-    
-    // Get avatar file path using helper
-    const avatarPath = fileHelper.getAvatarByIndex(account.index_avatar);
-    
-    if (!avatarPath) {
-      throw new Error(`Không tìm thấy avatar với index ${account.index_avatar}`);
-    }
-    
-    console.log(`📸 Using avatar[${account.index_avatar}]: ${avatarPath}`);
 
-    // Upload avatar
+    // Upload avatar to YouTube Studio
     await youtubeService.uploadAvatar(page, channelId, avatarPath);
 
     // Mark avatar as uploaded
@@ -300,8 +279,7 @@ async function uploadAvatarForAccount(account) {
       email: account.email,
       success: true,
       channelId,
-      avatar: avatarPath.split('/').pop(),
-      avatarIndex: account.index_avatar
+      avatar: imageName
     };
 
   } catch (error) {
