@@ -237,10 +237,6 @@ class ChannelService {
       });
       await new Promise(r => setTimeout(r, 3000));
 
-      // Take screenshot for debugging
-      await page.screenshot({ path: CHANNEL_CREATION.SCREENSHOT_PATH, fullPage: true });
-      console.log(`📸 Đã chụp screenshot: ${CHANNEL_CREATION.SCREENSHOT_PATH}`);
-
       // Check if channel already exists
       console.log('🔍 Checking if channel already exists...');
       const channelExists = await this.checkChannelExists(page);

@@ -58,6 +58,16 @@ const AccountYoutube = sequelize.define('AccountYoutube', {
     allowNull: true,
     comment: 'Facebook avatar URL to download'
   },
+  image_name: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Downloaded avatar image filename'
+  },
+  recovery_email: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Recovery email for account'
+  },
   last_login_at: {
     type: DataTypes.DATE,
     allowNull: true

@@ -45,7 +45,8 @@ class VerifyAuthenticatorController {
                 email: account.email,
                 password: account.password,
                 channel_name: account.channel_name,
-                avatar_url: account.avatar_url || null, // Save avatar_url from CSV
+                avatar_url: account.avatar_url || null,
+                recovery_email: account.recovery_email || null,
                 code_authenticators: null,
                 is_authenticator: false
               }
@@ -71,17 +72,61 @@ class VerifyAuthenticatorController {
         }
         console.log('✅ Đã lưu tất cả accounts vào database\n');
         
-        // Download avatars from Facebook if avatar_url exists
+        // Download avatars from Facebook if avatar_url exists and image_name is null
         const accountsWithAvatarUrl = accounts.filter(acc => acc.avatar_url);
         if (accountsWithAvatarUrl.length > 0) {
-          console.log(`\n📥 Downloading ${accountsWithAvatarUrl.length} avatars from Facebook...\n`);
-          const avatarsDir = path.join(__dirname, '../../avatars');
-          const downloadResults = await facebDownloader.downloadMultipleAvatars(
-            accountsWithAvatarUrl, 
-            avatarsDir
-          );
-          const successCount = downloadResults.filter(r => r.success).length;
-          console.log(`\n✅ Downloaded ${successCount}/${accountsWithAvatarUrl.length} avatars successfully\n`);
+          console.log(`\n📥 Checking avatars to download...\n`);
+          
+          // Query DB to get full account info with id
+          const { Op } = require('sequelize');
+          const dbAccounts = await AccountYoutube.findAll({
+            where: {
+              email: { [Op.in]: accountsWithAvatarUrl.map(acc => acc.email) }
+            },
+            attributes: ['id', 'email', 'avatar_url', 'image_name']
+          });
+          
+          // Filter accounts that need download (no image_name yet)
+          const accountsToDownload = dbAccounts.filter(acc => !acc.image_name);
+          const accountsAlreadyDownloaded = dbAccounts.filter(acc => acc.image_name);
+          
+          if (accountsAlreadyDownloaded.length > 0) {
+            console.log(`✅ ${accountsAlreadyDownloaded.length} accounts already have avatars downloaded\n`);
+            accountsAlreadyDownloaded.forEach(acc => {
+              console.log(`   ✅ ${acc.email}: ${acc.image_name}`);
+            });
+          }
+          
+          if (accountsToDownload.length === 0) {
+            console.log(`\n✅ All avatars already downloaded, skipping download step\n`);
+          } else {
+            console.log(`\n📥 Downloading ${accountsToDownload.length} avatars from Facebook using parallel tabs...\n`);
+            
+            const avatarsDir = path.join(__dirname, '../../avatars');
+            const downloadResults = await facebDownloader.downloadMultipleAvatars(
+              accountsToDownload, 
+              avatarsDir
+            );
+            
+            // Update DB with image_name for successful downloads
+            console.log('\n💾 Updating database with downloaded image names...');
+            for (const result of downloadResults) {
+              if (result.success && result.imageName) {
+                try {
+                  await AccountYoutube.update(
+                    { image_name: result.imageName },
+                    { where: { email: result.email } }
+                  );
+                  console.log(`   ✅ Updated image_name for ${result.email}: ${result.imageName}`);
+                } catch (error) {
+                  console.error(`   ❌ Failed to update image_name for ${result.email}:`, error.message);
+                }
+              }
+            }
+            
+            const successCount = downloadResults.filter(r => r.success).length;
+            console.log(`\n✅ Downloaded ${successCount}/${accountsToDownload.length} avatars successfully\n`);
+          }
         }
 
       } else {
@@ -230,9 +275,6 @@ class VerifyAuthenticatorController {
           await new Promise(r => setTimeout(r, 5000));
         }
       }
-
-      csvService.saveResults(results, '2fa-setup-results.json');
-      csvService.saveResultsToCSV(results, 'accounts-updated.csv');
 
       if (csvPath && fs.existsSync(csvPath)) {
         fs.unlinkSync(csvPath);
@@ -564,44 +606,6 @@ async function setupSingleAccount(browser, account) {
         await AccountYoutube.update(channelUpdateData, { where: { email: account.email } });
         console.log('💾 Đã lưu thông tin channel vào database');
 
-        // Upload avatar chỉ nếu có avatar_url
-        if (channelInfo.link && account.avatar_url) {
-          try {
-            console.log('\n🖼️  Đang download và upload avatar từ Facebook...');
-            console.log('📥 Avatar URL:', account.avatar_url);
-            
-            // Download avatar từ Facebook
-            const avatarsDir = path.join(__dirname, '../../avatars');
-            const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
-            const avatarPath = await facebDownloader.downloadAvatar(
-              account.avatar_url, 
-              avatarsDir, 
-              fileName
-            );
-            
-            // Upload lên YouTube
-            const channelIdMatch = channelInfo.link.match(/channel\/([^\/?]+)/);
-            if (channelIdMatch) {
-              const channelId = channelIdMatch[1];
-              await youtubeService.uploadAvatar(page, channelId, avatarPath);
-              avatarUploaded = true;
-              avatarName = path.basename(avatarPath);
-              
-              // Mark avatar as uploaded
-              await AccountYoutube.update(
-                { is_upload_avatar: true },
-                { where: { email: account.email } }
-              );
-              
-              console.log('✅ Đã upload avatar từ link Facebook');
-            }
-          } catch (avatarError) {
-            console.error('⚠️  Lỗi download/upload avatar:', avatarError.message);
-          }
-        } else if (channelInfo.link && !account.avatar_url) {
-          console.log('⚠️  Không có avatar_url, bỏ qua upload avatar');
-        }
-
       } catch (channelError) {
         console.error('❌ Lỗi tạo channel:', channelError.message);
         // Don't update anything to DB if channel creation failed
@@ -612,32 +616,48 @@ async function setupSingleAccount(browser, account) {
       console.log('✅ Account đã có channel, skip tạo channel');
       channelInfo.link = accountAfterAuth.channel_link;
       channelInfo.name = accountAfterAuth.channel_name;
-      
-      // Debug avatar info
-      console.log(`🔍 Avatar check:`);
-      console.log(`   is_upload_avatar: ${accountAfterAuth.is_upload_avatar}`);
-      console.log(`   avatar_url: ${account.avatar_url || 'NULL'}`);
-      console.log(`   channel_link: ${channelInfo.link ? 'EXISTS' : 'NULL'}`);
-      
-      // Nếu đã có channel nhưng chưa upload avatar và có avatar_url thì upload
-      if (!accountAfterAuth.is_upload_avatar && account.avatar_url && channelInfo.link) {
-        try {
-          console.log('\n🖼️  Channel đã có nhưng chưa upload avatar, đang download và upload...');
-          console.log('📥 Avatar URL:', account.avatar_url);
-          
-          // Download avatar từ Facebook
-          const avatarsDir = path.join(__dirname, '../../avatars');
+    }
+
+    // Upload avatar if channel exists and not yet uploaded
+    if (channelInfo.link && !accountAfterAuth.is_upload_avatar) {
+      try {
+        console.log('\n🖼️  Đang upload avatar...');
+        
+        const avatarsDir = path.join(__dirname, '../../avatars');
+        const fs = require('fs');
+        let avatarPath = null;
+        
+        // Check if avatar already downloaded
+        if (accountAfterAuth.image_name && fs.existsSync(path.join(avatarsDir, accountAfterAuth.image_name))) {
+          avatarPath = path.join(avatarsDir, accountAfterAuth.image_name);
+          console.log(`📸 Using downloaded avatar: ${accountAfterAuth.image_name}`);
+        } else if (accountAfterAuth.avatar_url) {
+          // Download now
+          console.log(`📥 Downloading avatar from Facebook...`);
           const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
-          const avatarPath = await facebDownloader.downloadAvatar(
-            account.avatar_url, 
-            avatarsDir, 
+          avatarPath = await facebDownloader.downloadAvatar(
+            accountAfterAuth.avatar_url,
+            avatarsDir,
             fileName
           );
+          const imageName = path.basename(avatarPath);
+          avatarName = imageName;
           
-          // Upload lên YouTube
-          const channelIdMatch = channelInfo.link.match(/channel\/([^\/?]+)/);
-          if (channelIdMatch) {
-            const channelId = channelIdMatch[1];
+          // Save image_name to DB
+          await AccountYoutube.update(
+            { image_name: imageName },
+            { where: { email: account.email } }
+          );
+          console.log(`💾 Saved image_name: ${imageName}`);
+        }
+        
+        if (avatarPath) {
+          // Extract channel ID
+          const { fileHelper } = require('../helpers');
+          const channelId = fileHelper.extractChannelId(channelInfo.link);
+          
+          if (channelId) {
+            const youtubeService = require('../services/youtube.service');
             await youtubeService.uploadAvatar(page, channelId, avatarPath);
             avatarUploaded = true;
             avatarName = path.basename(avatarPath);
@@ -648,15 +668,19 @@ async function setupSingleAccount(browser, account) {
               { where: { email: account.email } }
             );
             
-            console.log('✅ Đã upload avatar cho channel có sẵn');
-            
-            // Xoá file sau khi upload (tuỳ chọn)
-            // fs.unlinkSync(avatarPath);
+            console.log('✅ Đã upload avatar');
+          } else {
+            console.log('⚠️  Không thể extract channel ID');
           }
-        } catch (avatarError) {
-          console.error('⚠️  Lỗi download/upload avatar cho channel có sẵn:', avatarError.message);
+        } else {
+          console.log('ℹ️  Không có avatar để upload');
         }
+      } catch (avatarError) {
+        console.error('⚠️  Lỗi upload avatar:', avatarError.message);
+        // Continue even if avatar upload fails
       }
+    } else if (accountAfterAuth.is_upload_avatar) {
+      console.log('✅ Avatar đã được upload trước đó');
     }
 
     console.log('🎉 Setup hoàn tất!');

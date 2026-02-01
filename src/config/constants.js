@@ -4,8 +4,7 @@ const CHANNEL_CREATION = {
   WAIT_AFTER_CLICK: 5000,
   WAIT_AFTER_INPUT: 2000,
   WAIT_AFTER_ERROR: 2000,
-  INPUT_DELAY: 100,
-  SCREENSHOT_PATH: 'debug-channel-switcher.png'
+  INPUT_DELAY: 100
 };
 
 // Selectors for YouTube UI

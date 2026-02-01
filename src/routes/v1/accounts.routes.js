@@ -19,3 +19,4 @@ router.get('/', accountsController.getAccounts);
 router.post('/update-avatar-urls', upload.fields([{ name: 'file', maxCount: 1 }]), accountsController.updateAvatarUrls);
 
 module.exports = router;
+
