@@ -243,6 +243,59 @@ class GoogleAuthService {
     }
   }
 
+  /**
+   * Kiểm tra xem đã đăng nhập Google chưa
+   * @param {Page} page - Puppeteer page
+   * @returns {Promise<boolean>} - true nếu đã đăng nhập
+   */
+  async isLoggedIn(page) {
+    try {
+      // Truy cập trang Google để check session
+      await page.goto('https://accounts.google.com/ServiceLogin', {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+      await new Promise(r => setTimeout(r, 2000));
+
+      const currentUrl = page.url();
+
+      // Nếu URL chứa "myaccount" hoặc redirect về Google account page
+      // thì đã đăng nhập rồi
+      if (currentUrl.includes('myaccount.google.com') || 
+          currentUrl.includes('accounts.google.com/AccountChooser') ||
+          currentUrl.includes('accounts.google.com/b/')) {
+        console.log('✅ Đã đăng nhập Google (session còn hiệu lực)');
+        return true;
+      }
+
+      // Kiểm tra xem có profile avatar không (dấu hiệu đã login)
+      const hasProfileAvatar = await page.evaluate(() => {
+        return !!document.querySelector('img[alt*="Google"]') || 
+               !!document.querySelector('[data-ogsr-up]') ||
+               !!document.querySelector('a[aria-label*="Google Account"]');
+      });
+
+      if (hasProfileAvatar) {
+        console.log('✅ Đã đăng nhập Google (tìm thấy profile)');
+        return true;
+      }
+
+      // Kiểm tra xem có input email không (dấu hiệu chưa login)
+      const hasEmailInput = await page.$('input[type="email"]');
+      if (hasEmailInput) {
+        console.log('ℹ️  Chưa đăng nhập Google');
+        return false;
+      }
+
+      console.log('✅ Đã đăng nhập Google');
+      return true;
+
+    } catch (error) {
+      console.log(`⚠️  Không xác định được trạng thái login: ${error.message}`);
+      return false;
+    }
+  }
+
   async logout(page) {
     try {
       console.log('🚪 Đang logout...');
