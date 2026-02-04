@@ -40,6 +40,9 @@ export default function ListChannelsPage() {
   // Open browser state
   const [openingBrowserId, setOpeningBrowserId] = useState<number | null>(null);
   
+  // Upload avatars state
+  const [uploadingAvatars, setUploadingAvatars] = useState(false);
+  
   // Pagination & Search
   const [pagination, setPagination] = useState<Pagination>({
     total: 0,
@@ -282,6 +285,49 @@ export default function ListChannelsPage() {
     }
   };
 
+  const handleRetryUploadAvatars = async () => {
+    if (uploadingAvatars) return;
+    
+    const confirmed = confirm(
+      '� Retry upload avatar cho các kênh bị fail?\n\n' +
+      'Quá trình này sẽ:\n' +
+      '- Tìm các kênh đã tạo nhưng CHƯA upload avatar thành công\n' +
+      '- Download avatar từ Facebook (nếu chưa có file local)\n' +
+      '- Upload lên YouTube Studio\n\n' +
+      'Chỉ xử lý các kênh bị fail ở bước upload avatar.\n\n' +
+      'Tiếp tục?'
+    );
+    
+    if (!confirmed) return;
+    
+    setUploadingAvatars(true);
+    
+    try {
+      const result = await accountsAPI.uploadAvatars();
+      
+      if (result.success) {
+        const { total, success, failed } = result.summary;
+        alert(
+          `✅ ${result.message}\n\n` +
+          `📊 Kênh cần retry: ${total}\n` +
+          `✓ Upload thành công: ${success}\n` +
+          `✗ Vẫn thất bại: ${failed}`
+        );
+        
+        // Refresh channels list
+        fetchChannels();
+      } else {
+        throw new Error(result.message || 'Retry upload avatars failed');
+      }
+      
+    } catch (error: any) {
+      console.error('Retry upload avatars failed:', error);
+      alert(`❌ Retry failed: ${error.message}`);
+    } finally {
+      setUploadingAvatars(false);
+    }
+  };
+
   return (
     <div className="p-6">
       {/* Compact Header */}
@@ -291,6 +337,24 @@ export default function ListChannelsPage() {
           <p className="text-sm text-gray-500 mt-1">Danh sách tất cả kênh YouTube</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={handleRetryUploadAvatars}
+            disabled={uploadingAvatars}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Retry upload avatar cho các kênh bị fail"
+          >
+            {uploadingAvatars ? (
+              <>
+                <RotateCw size={16} className="animate-spin" />
+                Đang retry...
+              </>
+            ) : (
+              <>
+                <RotateCw size={16} />
+                Retry Avatar
+              </>
+            )}
+          </button>
           <button
             onClick={handleExport}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
