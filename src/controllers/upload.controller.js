@@ -119,8 +119,12 @@ class UploadController {
         });
       }
 
-      // Kiểm tra có file upload không
-      const uploadedFile = req.file;
+      // Kiểm tra có file upload không - hỗ trợ cả req.file và req.files
+      let uploadedFile = req.file;
+      if (!uploadedFile && req.files) {
+        // Kiểm tra cả 'video' và 'videoFile' field names
+        uploadedFile = req.files.video?.[0] || req.files.videoFile?.[0];
+      }
       
       // Phải có ít nhất 1 trong 2: sourceUrl hoặc file
       if (!sourceUrl && !uploadedFile) {
@@ -199,12 +203,17 @@ class UploadController {
     } catch (error) {
       console.error('❌ Download and upload controller error:', error);
       
-      // Xóa file nếu có lỗi
-      if (req.file) {
+      // Xóa file nếu có lỗi - hỗ trợ cả req.file và req.files
+      let fileToDelete = req.file;
+      if (!fileToDelete && req.files) {
+        fileToDelete = req.files.video?.[0] || req.files.videoFile?.[0];
+      }
+      
+      if (fileToDelete) {
         try {
           const fs = require('fs');
-          if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
+          if (fs.existsSync(fileToDelete.path)) {
+            fs.unlinkSync(fileToDelete.path);
           }
         } catch (err) {
           console.error(`⚠️  Không thể xóa file: ${err.message}`);

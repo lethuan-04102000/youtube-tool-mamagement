@@ -593,6 +593,11 @@ async function setupSingleAccount(browser, account, options = {}) {
       }
 
       console.log('💾 Đã lưu Authenticator vào database');
+      
+      // Verify the update was successful
+      const verifyAccount = await AccountYoutube.findOne({ where: { email: account.email } });
+      console.log(`✅ Verified is_authenticator: ${verifyAccount.is_authenticator} (type: ${typeof verifyAccount.is_authenticator})`);
+      console.log(`✅ Verified code_authenticators: ${verifyAccount.code_authenticators ? 'SET' : 'NULL'}`);
     }
 
     // Check if need to create YouTube channel
@@ -773,13 +778,23 @@ async function setupSingleAccount(browser, account, options = {}) {
     console.error(`❌ Lỗi: ${error.message}`);
     
     try {
-      await AccountYoutube.update(
-        { 
-          is_authenticator: false,
-          notes: `Setup failed: ${error.message}`
-        },
-        { where: { email: account.email } }
-      );
+      // Only set is_authenticator to false if 2FA setup itself failed (secretKey not saved)
+      // Check if secretKey was already saved to avoid overwriting successful 2FA setup
+      const existingAccount = await AccountYoutube.findOne({ where: { email: account.email } });
+      
+      const updateData = {
+        notes: `Setup failed: ${error.message}`
+      };
+      
+      // Only set is_authenticator to false if it wasn't already set to true (2FA not completed yet)
+      if (!existingAccount?.code_authenticators || existingAccount.is_authenticator !== true) {
+        updateData.is_authenticator = false;
+        console.log('⚠️  2FA setup failed, setting is_authenticator to false');
+      } else {
+        console.log('ℹ️  2FA was successful, keeping is_authenticator as true despite later errors');
+      }
+      
+      await AccountYoutube.update(updateData, { where: { email: account.email } });
     } catch (dbError) {
       console.error('❌ Lỗi update database:', dbError.message);
     }

@@ -34,7 +34,7 @@ router.get('/open-browsers', accountsController.getOpenBrowsers);
 
 /**
  * @route   POST /api/v1/accounts/:id/open-browser
- * @desc    Open browser with profile for account
+ * @desc    Open fresh browser for account (no profile, login from scratch)
  * @access  Public
  */
 router.post('/:id/open-browser', accountsController.openBrowserWithProfile);

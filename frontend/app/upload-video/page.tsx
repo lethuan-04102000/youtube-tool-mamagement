@@ -388,11 +388,19 @@ export default function UploadVideoPage() {
                         accept="video/*"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
+                          console.log('File selected:', file?.name, file?.size);
                           if (file) {
-                            updateVideoInput(video.id, 'videoFile', file);
-                            if (!video.title) {
-                              updateVideoInput(video.id, 'title', file.name.replace(/\.[^/.]+$/, ''));
-                            }
+                            // Update both videoFile and title in one state update
+                            setVideos(videos.map(v => {
+                              if (v.id === video.id) {
+                                return {
+                                  ...v,
+                                  videoFile: file,
+                                  title: v.title || file.name.replace(/\.[^/.]+$/, '')
+                                };
+                              }
+                              return v;
+                            }));
                           }
                         }}
                         className="hidden"
