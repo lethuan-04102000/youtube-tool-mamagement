@@ -21,7 +21,7 @@ router.post('/youtube', uploadController.uploadToYoutube);
  * @route POST /api/v1/upload/download-and-upload
  * @desc Flow hoàn chỉnh: Download từ URL -> Upload lên YouTube HOẶC Upload file từ client -> Upload lên YouTube
  * @multipart form-data:
- *   - video: file (optional) - File video upload từ client
+ *   - video OR videoFile: file (optional) - File video upload từ client
  *   - id: number (optional) - ID của account
  *   - email: string (optional) - Email của account (cần id hoặc email)
  *   - sourceUrl: string (optional) - URL video để download (Facebook, TikTok, etc.)
@@ -32,7 +32,10 @@ router.post('/youtube', uploadController.uploadToYoutube);
  *   - scheduleDate: string (optional) - ISO format: '2024-01-15T10:00:00'
  * @note Phải truyền ít nhất 1 trong 2: sourceUrl hoặc file video
  */
-router.post('/download-and-upload', uploadVideo.single('video'), uploadController.downloadAndUpload);
+router.post('/download-and-upload', uploadVideo.fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'videoFile', maxCount: 1 }
+]), uploadController.downloadAndUpload);
 
 /**
  * @route GET /api/v1/upload/downloads
