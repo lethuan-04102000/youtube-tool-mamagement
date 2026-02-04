@@ -249,6 +249,21 @@ export const accountsAPI = {
     
     return response.json();
   },
+  
+  // Upload avatars for accounts that failed
+  uploadAvatars: async (): Promise<any> => {
+    const url = buildApiUrl('/api/v1/youtube/upload-avatar');
+    const response = await fetch(url, {
+      method: 'POST',
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload avatars failed' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+    
+    return response.json();
+  },
 };
 
 // Upload API
