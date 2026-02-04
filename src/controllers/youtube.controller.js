@@ -142,11 +142,18 @@ async function createChannelForAccount(account) {
     
     // Use HEADLESS for YouTube operations
     const headless = process.env.HEADLESS === 'true';
-    browser = await browserService.launchBrowser(headless);
+    // Launch browser with profile (if exists) and reuse session when possible
+    browser = await browserService.launchBrowser(headless, account.email);
     const page = await browserService.createPage(browser);
 
-    // Login
-    await googleAuthService.login(page, account.email, account.password);
+    // Check session first — only login if necessary
+    const isLoggedIn = await googleAuthService.isLoggedIn(page);
+    if (!isLoggedIn) {
+      console.log(`🔐 [${account.email}] Session not found or expired — performing login`);
+      await googleAuthService.login(page, account.email, account.password);
+    } else {
+      console.log(`🎯 [${account.email}] Using saved session (skip login)`);
+    }
 
     // Create channel
     const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
@@ -223,11 +230,18 @@ async function uploadAvatarForAccount(account) {
     
     // Use HEADLESS for YouTube operations
     const headless = process.env.HEADLESS === 'true';
-    browser = await browserService.launchBrowser(headless);
+    // Launch browser with profile to reuse session when available
+    browser = await browserService.launchBrowser(headless, account.email);
     const page = await browserService.createPage(browser);
 
-    // Login
-    await googleAuthService.login(page, account.email, account.password);
+    // Check session first — only login if necessary
+    const isLoggedIn = await googleAuthService.isLoggedIn(page);
+    if (!isLoggedIn) {
+      console.log(`🔐 [${account.email}] Session not found or expired — performing login`);
+      await googleAuthService.login(page, account.email, account.password);
+    } else {
+      console.log(`🎯 [${account.email}] Using saved session (skip login)`);
+    }
 
     const avatarsDir = path.join(__dirname, '../../avatars');
     const fs = require('fs');

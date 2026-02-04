@@ -5,6 +5,97 @@ const path = require('path');
 
 class FacebDownloaderService {
   
+  constructor() {
+    // Path to store Facebook cookies
+    this.cookiesPath = path.join(__dirname, '../../fb-cookies.json');
+  }
+
+  /**
+   * Login to Facebook and save cookies
+   */
+  async loginToFacebook(page) {
+    try {
+      console.log('🔐 Checking Facebook login status...');
+      
+      // Try to load existing cookies
+      if (fs.existsSync(this.cookiesPath)) {
+        console.log('📂 Loading saved Facebook cookies...');
+        const cookiesString = fs.readFileSync(this.cookiesPath, 'utf8');
+        const cookies = JSON.parse(cookiesString);
+        await page.setCookie(...cookies);
+        
+        // Check if cookies are still valid
+        await page.goto('https://www.facebook.com/', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const isLoggedIn = await page.evaluate(() => {
+          // Check for logged-in indicators
+          return !document.querySelector('input[name="email"]') && 
+                 (document.querySelector('[data-visualcompletion="ignore-dynamic"]') || 
+                  document.querySelector('[aria-label*="Facebook"]'));
+        });
+        
+        if (isLoggedIn) {
+          console.log('✅ Facebook session is active (using saved cookies)');
+          return true;
+        } else {
+          console.log('⚠️  Saved cookies expired, logging in again...');
+        }
+      }
+      
+      // Login if no valid cookies
+      const fbEmail = process.env.FB_EMAIL;
+      const fbPassword = process.env.FB_PASSWORD;
+      
+      if (!fbEmail || !fbPassword) {
+        console.log('⚠️  FB_EMAIL or FB_PASSWORD not set in .env, skipping login');
+        return false;
+      }
+      
+      console.log(`🔐 Logging into Facebook as ${fbEmail}...`);
+      
+      await page.goto('https://www.facebook.com/', { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // Enter email
+      await page.waitForSelector('input[name="email"]', { timeout: 10000 });
+      await page.type('input[name="email"]', fbEmail, { delay: 100 });
+      
+      // Enter password
+      await page.type('input[name="pass"]', fbPassword, { delay: 100 });
+      
+      // Click login button
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+        page.click('button[name="login"]')
+      ]);
+      
+      await new Promise(r => setTimeout(r, 3000));
+      
+      // Check if login successful
+      const loginSuccess = await page.evaluate(() => {
+        return !document.querySelector('input[name="email"]');
+      });
+      
+      if (!loginSuccess) {
+        throw new Error('Facebook login failed');
+      }
+      
+      console.log('✅ Facebook login successful');
+      
+      // Save cookies
+      const cookies = await page.cookies();
+      fs.writeFileSync(this.cookiesPath, JSON.stringify(cookies, null, 2));
+      console.log('💾 Facebook cookies saved');
+      
+      return true;
+      
+    } catch (error) {
+      console.error('❌ Facebook login error:', error.message);
+      return false;
+    }
+  }
+
   /**
    * Download avatar using popup window approach
    * Opens Facebook URL in popup, extracts image, downloads it
@@ -116,6 +207,17 @@ class FacebDownloaderService {
         ]
       });
 
+      // Create a login page and login once for the browser session
+      const loginPage = await browser.newPage();
+      await loginPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      
+      const loginSuccess = await this.loginToFacebook(loginPage);
+      if (!loginSuccess) {
+        console.log('⚠️  Proceeding without Facebook login (may fail on private photos)');
+      }
+      
+      await loginPage.close();
+
       const results = [];
       
       // Process accounts in batches
@@ -126,9 +228,20 @@ class FacebDownloaderService {
         
         console.log(`\n🔄 Batch ${batchNum}/${totalBatches} (${batch.length} accounts)...`);
         
-        // Open tabs
+        // Open tabs and load cookies
         const tabs = await Promise.all(
-          batch.map(() => browser.newPage())
+          batch.map(async () => {
+            const tab = await browser.newPage();
+            
+            // Load cookies to each tab
+            if (fs.existsSync(this.cookiesPath)) {
+              const cookiesString = fs.readFileSync(this.cookiesPath, 'utf8');
+              const cookies = JSON.parse(cookiesString);
+              await tab.setCookie(...cookies);
+            }
+            
+            return tab;
+          })
         );
         
         // Set user agent for all tabs
@@ -209,6 +322,12 @@ class FacebDownloaderService {
       
       const page = await browser.newPage();
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      
+      // Login to Facebook first
+      const loginSuccess = await this.loginToFacebook(page);
+      if (!loginSuccess) {
+        console.log('⚠️  Proceeding without Facebook login (may fail on private photos)');
+      }
       
       const result = await this.downloadAvatarInTab(page, facebookUrl, outputFolder, fileName);
       

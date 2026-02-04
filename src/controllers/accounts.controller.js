@@ -60,7 +60,8 @@ exports.getAccounts = async (req, res) => {
       attributes: ['id', 'email', 'channel_name', 'channel_link', 'is_authenticator', 'is_create_channel'],
       limit: limitNum,
       offset: offset,
-      order: [['createdAt', 'DESC']]
+      // Order by creation date ascending so older records appear first
+      order: [['createdAt', 'ASC']]
     });
 
     // Format data to match frontend expectations
@@ -196,6 +197,281 @@ exports.updateAvatarUrls = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message
+    });
+  }
+};
+
+/**
+ * Export all accounts as CSV (Excel-compatible)
+ */
+exports.exportAccounts = async (req, res) => {
+  try {
+    const accounts = await AccountYoutube.findAll({
+      attributes: [
+        'id', 'email', 'password', 'channel_name', 'channel_link',
+        'avatar_url', 'image_name', 'is_authenticator', 'is_create_channel', 'is_upload_avatar',
+        'createdAt', 'updatedAt'
+      ],
+      order: [['createdAt', 'ASC']]
+    });
+
+    const headers = [
+      'id','email','password','channel_name','channel_link',
+      'avatar_url','image_name','is_authenticator','is_create_channel','is_upload_avatar',
+      'createdAt','updatedAt'
+    ];
+
+    const escape = (value) => {
+      if (value === null || value === undefined) return '';
+      let s = String(value);
+      // Convert boolean to 1/0 for Excel friendliness
+      if (s === 'true' || s === 'false') return s;
+      // Escape double quotes
+      s = s.replace(/"/g, '""');
+      return `"${s}"`;
+    };
+
+    const rows = accounts.map(a => {
+      const values = [
+        a.id,
+        a.email,
+        a.password || '',
+        a.channel_name || '',
+        a.channel_link || '',
+        a.avatar_url || '',
+        a.image_name || '',
+        a.is_authenticator ? 'true' : 'false',
+        a.is_create_channel ? 'true' : 'false',
+        a.is_upload_avatar ? 'true' : 'false',
+        a.createdAt ? a.createdAt.toISOString() : '',
+        a.updatedAt ? a.updatedAt.toISOString() : ''
+      ];
+      return values.map(v => escape(v)).join(',');
+    });
+
+    const csvContent = `${headers.join(',')}
+${rows.join('\n')}`;
+
+    const fileName = `accounts_export_${Date.now()}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.send(csvContent);
+
+  } catch (error) {
+    console.error('❌ Error exporting accounts:', error);
+    return res.status(500).json({ success: false, message: 'Failed to export accounts', error: error.message });
+  }
+};
+
+/**
+ * Track open browsers by email to prevent duplicate opens
+ */
+const openBrowsers = new Map();
+
+/**
+ * Open browser with profile for account
+ * If profile exists, open with existing session
+ * If not, open new browser to login and save profile
+ */
+exports.openBrowserWithProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account ID is required'
+      });
+    }
+
+    // Find account
+    const account = await AccountYoutube.findByPk(id);
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: `Account with ID ${id} not found`
+      });
+    }
+
+    // Check if browser already open for this email
+    if (openBrowsers.has(account.email)) {
+      return res.status(409).json({
+        success: false,
+        message: `Browser already open for ${account.email}. Please close it first.`,
+        data: {
+          email: account.email,
+          note: 'Close the existing browser window before opening a new one.'
+        }
+      });
+    }
+
+    console.log(`\n🌐 Opening browser for account: ${account.email}`);
+
+    const browserService = require('../services/browser.service');
+    const sessionService = require('../services/session.service');
+    const googleAuthService = require('../services/google.auth.service');
+    
+    // Check if profile exists
+    const hasProfile = sessionService.hasProfile(account.email);
+    
+    if (hasProfile) {
+      console.log(`✅ Profile found for ${account.email}, opening with existing session...`);
+    } else {
+      console.log(`⚠️  No profile found for ${account.email}, opening fresh browser to login...`);
+    }
+
+    // Launch browser with profile (headless=false to show UI)
+    const browser = await browserService.launchBrowser(false, account.email);
+    const page = await browserService.createPage(browser);
+
+    // Track this browser
+    openBrowsers.set(account.email, {
+      browser,
+      openedAt: new Date()
+    });
+
+    // Listen for browser disconnect to clean up
+    browser.on('disconnected', () => {
+      console.log(`🔴 Browser closed for ${account.email}`);
+      openBrowsers.delete(account.email);
+    });
+
+    // Navigate to YouTube to check session
+    await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
+    
+    // Check if already logged in
+    const isLoggedIn = await googleAuthService.isLoggedIn(page);
+    
+    if (!isLoggedIn && account.password) {
+      console.log(`🔐 Session not found, logging in with stored credentials...`);
+      try {
+        await googleAuthService.login(page, account.email, account.password);
+        console.log(`✅ Login successful for ${account.email}`);
+        
+        // Navigate back to YouTube after login
+        await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
+      } catch (loginError) {
+        console.error(`❌ Auto-login failed: ${loginError.message}`);
+        console.log(`ℹ️  Please login manually in the browser`);
+      }
+    } else if (!isLoggedIn && !account.password) {
+      console.log(`⚠️  No password stored, please login manually`);
+    } else {
+      console.log(`✅ Already logged in for ${account.email}`);
+    }
+    
+    console.log(`📂 Profile saved at: ${sessionService.getProfilePath(account.email)}`);
+    console.log(`ℹ️  Browser will stay open - close it manually when done`);
+
+    // Don't close browser - let user interact with it
+    // Browser will be closed manually by user
+    
+    return res.json({
+      success: true,
+      message: `Browser opened for ${account.email}. ${isLoggedIn ? 'Already logged in.' : 'Login attempted.'}`,
+      data: {
+        email: account.email,
+        hasExistingProfile: hasProfile,
+        wasLoggedIn: isLoggedIn,
+        autoLoginAttempted: !isLoggedIn && !!account.password,
+        note: isLoggedIn 
+          ? 'Browser is open with existing session.' 
+          : account.password 
+            ? 'Login attempted. Check browser window.'
+            : 'No password stored. Please login manually.'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error opening browser:', error);
+    
+    // Clean up on error
+    const account = await AccountYoutube.findByPk(req.params.id);
+    if (account && openBrowsers.has(account.email)) {
+      openBrowsers.delete(account.email);
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to open browser',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get list of open browsers
+ */
+exports.getOpenBrowsers = async (req, res) => {
+  try {
+    const browsers = Array.from(openBrowsers.entries()).map(([email, info]) => ({
+      email,
+      openedAt: info.openedAt,
+      duration: Math.floor((Date.now() - info.openedAt.getTime()) / 1000) // seconds
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        count: browsers.length,
+        browsers
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error getting open browsers:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get open browsers',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Close browser for specific account
+ */
+exports.closeBrowser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const account = await AccountYoutube.findByPk(id);
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: `Account with ID ${id} not found`
+      });
+    }
+
+    if (!openBrowsers.has(account.email)) {
+      return res.status(404).json({
+        success: false,
+        message: `No open browser found for ${account.email}`
+      });
+    }
+
+    const { browser } = openBrowsers.get(account.email);
+    
+    try {
+      await browser.close();
+      console.log(`✅ Browser closed for ${account.email}`);
+    } catch (err) {
+      console.log(`⚠️  Browser already closed for ${account.email}`);
+    }
+    
+    openBrowsers.delete(account.email);
+
+    return res.json({
+      success: true,
+      message: `Browser closed for ${account.email}`
+    });
+
+  } catch (error) {
+    console.error('❌ Error closing browser:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to close browser',
+      error: error.message
     });
   }
 };

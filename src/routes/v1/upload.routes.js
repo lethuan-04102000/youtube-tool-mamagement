@@ -41,6 +41,24 @@ router.post('/download-and-upload', uploadVideo.single('video'), uploadControlle
 router.get('/downloads', uploadController.getDownloadedFiles);
 
 /**
+ * @route POST /api/v1/upload/batch-upload
+ * @desc Upload nhiều video (tối đa 4) từ URLs cho 1 account
+ * @body { 
+ *   id?: number, 
+ *   email?: string, 
+ *   videos: [{ 
+ *     sourceUrl: string, 
+ *     title?: string, 
+ *     description?: string, 
+ *     visibility?: 'public' | 'unlisted' | 'private', 
+ *     tags?: string[], 
+ *     scheduleDate?: string 
+ *   }] 
+ * }
+ */
+router.post('/batch-upload', uploadController.batchUpload);
+
+/**
  * @route GET /api/v1/upload/videos
  * @desc Lấy danh sách video đã upload lên YouTube
  * @query { page?: number, limit?: number, search?: string }

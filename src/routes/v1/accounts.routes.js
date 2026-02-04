@@ -18,5 +18,33 @@ router.get('/', accountsController.getAccounts);
  */
 router.post('/update-avatar-urls', upload.fields([{ name: 'file', maxCount: 1 }]), accountsController.updateAvatarUrls);
 
+/**
+ * @route   GET /api/v1/accounts/export
+ * @desc    Export all accounts as CSV
+ * @access  Public
+ */
+router.get('/export', accountsController.exportAccounts);
+
+/**
+ * @route   GET /api/v1/accounts/open-browsers
+ * @desc    Get list of open browsers
+ * @access  Public
+ */
+router.get('/open-browsers', accountsController.getOpenBrowsers);
+
+/**
+ * @route   POST /api/v1/accounts/:id/open-browser
+ * @desc    Open browser with profile for account
+ * @access  Public
+ */
+router.post('/:id/open-browser', accountsController.openBrowserWithProfile);
+
+/**
+ * @route   POST /api/v1/accounts/:id/close-browser
+ * @desc    Close browser for account
+ * @access  Public
+ */
+router.post('/:id/close-browser', accountsController.closeBrowser);
+
 module.exports = router;
 

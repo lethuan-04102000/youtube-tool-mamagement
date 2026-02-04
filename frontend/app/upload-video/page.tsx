@@ -1,26 +1,25 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { api, type Account, type UploadVideoRequest } from '@/lib/api';
+import { Upload, CheckCircle, XCircle, Loader2, Plus, Trash2 } from 'lucide-react';
+import { api, type Account, type BatchUploadVideoItem, type BatchUploadResult } from '@/lib/api';
 
-interface UploadResult {
-  success: boolean;
-  message: string;
-  videoUrl?: string;
+interface VideoInput extends BatchUploadVideoItem {
+  id: string;
+  videoFile?: File;
 }
 
 export default function UploadVideoPage() {
   const [channels, setChannels] = useState<Account[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
-  const [sourceUrl, setSourceUrl] = useState('');
-  const [visibility, setVisibility] = useState<'public' | 'unlisted' | 'private'>('public');
-  const [scheduleDate, setScheduleDate] = useState('');
+  const [videos, setVideos] = useState<VideoInput[]>([
+    { id: '1', sourceUrl: '', visibility: 'public' }
+  ]);
   const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<UploadResult | null>(null);
+  const [results, setResults] = useState<BatchUploadResult[] | null>(null);
   const [loadingChannels, setLoadingChannels] = useState(true);
+  const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url');
 
-  // Load channels on mount
   useEffect(() => {
     loadChannels();
   }, []);
@@ -37,68 +36,175 @@ export default function UploadVideoPage() {
     }
   };
 
+  const addVideoInput = () => {
+    if (videos.length >= 4) return;
+    const newId = (Math.max(...videos.map(v => parseInt(v.id))) + 1).toString();
+    setVideos([...videos, { id: newId, sourceUrl: '', visibility: 'public' }]);
+  };
+
+  const removeVideoInput = (id: string) => {
+    if (videos.length === 1) return;
+    setVideos(videos.filter(v => v.id !== id));
+  };
+
+  const updateVideoInput = (id: string, field: keyof VideoInput, value: any) => {
+    setVideos(videos.map(v => v.id === id ? { ...v, [field]: value } : v));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!selectedChannel || !sourceUrl) {
-      setResult({
-        success: false,
-        message: 'Vui lòng chọn kênh và nhập link video'
-      });
+    if (!selectedChannel) {
+      alert('Vui lòng chọn kênh');
       return;
     }
 
+    // Validate based on upload mode
+    if (uploadMode === 'url') {
+      const emptyVideos = videos.filter(v => !v.sourceUrl.trim());
+      if (emptyVideos.length > 0) {
+        alert('Vui lòng nhập link video cho tất cả các ô');
+        return;
+      }
+    } else {
+      const emptyFiles = videos.filter(v => !v.videoFile);
+      if (emptyFiles.length > 0) {
+        alert('Vui lòng chọn file video cho tất cả các ô');
+        return;
+      }
+    }
+
     setUploading(true);
-    setResult(null);
+    setResults(null);
 
     try {
-      const uploadData: UploadVideoRequest = {
-        id: selectedChannel,
-        sourceUrl,
-        visibility,
-        scheduleDate: scheduleDate || undefined,
-      };
+      if (uploadMode === 'url') {
+        // Batch upload from URLs
+        const response = await api.upload.batchUpload({
+          id: selectedChannel,
+          videos: videos.map(({ id, videoFile, ...rest }) => rest),
+        });
+        
+        setResults(response.data?.results || []);
 
-      const response = await api.upload.downloadAndUpload(uploadData);
-      
-      setResult({
-        success: response.success,
-        message: response.message,
-        videoUrl: response.data?.videoUrl,
-      });
-
-      // Reset form on success
-      if (response.success) {
-        setSourceUrl('');
-        setScheduleDate('');
+        if (response.success && response.data?.summary.success) {
+          setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
+        }
+      } else {
+        // Upload files one by one
+        const results: BatchUploadResult[] = [];
+        
+        for (let i = 0; i < videos.length; i++) {
+          const video = videos[i];
+          try {
+            const response = await api.upload.downloadAndUpload({
+              id: selectedChannel,
+              videoFile: video.videoFile,
+              title: video.title,
+              description: video.description,
+              visibility: video.visibility,
+              scheduleDate: video.scheduleDate,
+            });
+            
+            results.push({
+              index: i + 1,
+              sourceUrl: video.videoFile?.name || 'file-upload',
+              success: response.success,
+              message: response.message,
+              videoUrl: response.data?.videoUrl,
+              error: response.error,
+            });
+          } catch (error: any) {
+            results.push({
+              index: i + 1,
+              sourceUrl: video.videoFile?.name || 'file-upload',
+              success: false,
+              message: 'Upload failed',
+              error: error.message,
+            });
+          }
+          
+          // Delay between uploads
+          if (i < videos.length - 1) {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+        
+        setResults(results);
+        
+        // Reset on success
+        if (results.some(r => r.success)) {
+          setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
+        }
       }
     } catch (error: any) {
-      setResult({
-        success: false,
-        message: error.message || 'Upload failed'
-      });
+      alert(error.message || 'Upload failed');
     } finally {
       setUploading(false);
     }
   };
 
   const getMinDateTime = () => {
-    // Minimum 2 hours from now
     const now = new Date();
     now.setHours(now.getHours() + 2);
     return now.toISOString().slice(0, 16);
   };
 
+  const successCount = results?.filter(r => r.success).length || 0;
+  const totalCount = results?.length || 0;
+
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Upload Video</h1>
-        <p className="text-sm text-gray-600 mt-1">Download và upload video lên YouTube</p>
+        <p className="text-sm text-gray-600 mt-1">
+          Download và upload video lên YouTube (tối đa 4 videos cùng lúc)
+        </p>
       </div>
 
-      {/* Upload Form */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Upload Mode Tabs */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Nguồn Video
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                console.log('Switching to URL mode');
+                setUploadMode('url');
+                setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
+                setResults(null);
+              }}
+              className={`px-4 py-3 rounded-md border text-sm font-medium transition-colors ${
+                uploadMode === 'url'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+              }`}
+            >
+              🔗 Từ URL
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                console.log('Switching to File mode');
+                setUploadMode('file');
+                setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
+                setResults(null);
+              }}
+              className={`px-4 py-3 rounded-md border text-sm font-medium transition-colors ${
+                uploadMode === 'file'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+              }`}
+            >
+              📁 Từ File
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
           {/* Channel Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
@@ -125,115 +231,272 @@ export default function UploadVideoPage() {
             )}
           </div>
 
-          {/* Source Video URL */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Link Video
-            </label>
-            <input
-              type="url"
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://www.facebook.com/reel/..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">Facebook, TikTok, Instagram, etc.</p>
-          </div>
-
-          {/* Visibility */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Hiển thị
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['public', 'unlisted', 'private'] as const).map((vis) => (
+          {/* Video Inputs */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-sm font-medium text-gray-700">
+                Danh sách video ({videos.length}/4)
+              </label>
+              {videos.length < 4 && (
                 <button
-                  key={vis}
                   type="button"
-                  onClick={() => setVisibility(vis)}
-                  className={`px-3 py-2 rounded-md border text-xs font-medium transition-colors ${
-                    visibility === vis
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-                  }`}
+                  onClick={addVideoInput}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors shadow-sm"
                 >
-                  {vis === 'public' && '🌍 Public'}
-                  {vis === 'unlisted' && '🔗 Unlisted'}
-                  {vis === 'private' && '🔒 Private'}
+                  Thêm video
                 </button>
-              ))}
+              )}
             </div>
-          </div>
 
-          {/* Schedule Date (Optional) */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Lên lịch (tùy chọn)
-            </label>
-            <input
-              type="datetime-local"
-              value={scheduleDate}
-              onChange={(e) => setScheduleDate(e.target.value)}
-              min={getMinDateTime()}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Để trống để đăng ngay. Tối thiểu 2 giờ sau hiện tại.
-            </p>
+            {videos.map((video, index) => (
+              <div key={`${uploadMode}-${video.id}`} className="border-2 border-gray-300 rounded-lg p-5 space-y-4 bg-white shadow-sm">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-200">
+                  <span className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                      {index + 1}
+                    </span>
+                    Video {index + 1}
+                  </span>
+                  {videos.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeVideoInput(video.id)}
+                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 hover:text-white hover:bg-red-600 border border-red-600 rounded transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Xóa
+                    </button>
+                  )}
+                </div>
+
+                {/* Source URL or File */}
+                {uploadMode === 'url' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Link Video *
+                    </label>
+                    <input
+                      type="url"
+                      value={video.sourceUrl}
+                      onChange={(e) => updateVideoInput(video.id, 'sourceUrl', e.target.value)}
+                      placeholder="https://www.facebook.com/reel/..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Facebook, TikTok, Instagram, Google Drive, etc.</p>
+                  </div>
+                )}
+
+                {uploadMode === 'file' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Chọn File Video *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept="video/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            updateVideoInput(video.id, 'videoFile', file);
+                            if (!video.title) {
+                              updateVideoInput(video.id, 'title', file.name.replace(/\.[^/.]+$/, ''));
+                            }
+                          }
+                        }}
+                        className="hidden"
+                        id={`file-input-${video.id}`}
+                      />
+                      <label
+                        htmlFor={`file-input-${video.id}`}
+                        className="flex items-center justify-center w-full px-4 py-8 border-2 border-dashed border-gray-300 rounded-md cursor-pointer hover:border-blue-400 transition-colors bg-white"
+                      >
+                        <div className="text-center">
+                          {video.videoFile ? (
+                            <>
+                              <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                              <p className="text-sm text-gray-700 font-medium">{video.videoFile.name}</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {(video.videoFile.size / 1024 / 1024).toFixed(2)} MB
+                              </p>
+                              <p className="text-xs text-blue-600 mt-2">Click để chọn file khác</p>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                              <p className="text-sm text-gray-600">Click để chọn file</p>
+                              <p className="text-xs text-gray-500 mt-1">MP4, MOV, AVI, etc.</p>
+                            </>
+                          )}
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Title (Optional) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Tiêu đề (tùy chọn)
+                  </label>
+                  <input
+                    type="text"
+                    value={video.title || ''}
+                    onChange={(e) => updateVideoInput(video.id, 'title', e.target.value)}
+                    placeholder="Tự động lấy từ video nguồn"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
+                  />
+                </div>
+
+                {/* Description (Optional) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Mô tả (tùy chọn)
+                  </label>
+                  <textarea
+                    value={video.description || ''}
+                    onChange={(e) => updateVideoInput(video.id, 'description', e.target.value)}
+                    placeholder="Mô tả video..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white resize-none"
+                  />
+                </div>
+
+                {/* Visibility */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Hiển thị
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['public', 'unlisted', 'private'] as const).map((vis) => (
+                      <button
+                        key={vis}
+                        type="button"
+                        onClick={() => updateVideoInput(video.id, 'visibility', vis)}
+                        className={`px-2 py-2 rounded-md border text-xs font-medium transition-colors ${
+                          video.visibility === vis
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                        }`}
+                      >
+                        {vis === 'public' && '🌍 Public'}
+                        {vis === 'unlisted' && '🔗 Unlisted'}
+                        {vis === 'private' && '🔒 Private'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Schedule Date (Optional) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Lên lịch (tùy chọn)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={video.scheduleDate || ''}
+                    onChange={(e) => updateVideoInput(video.id, 'scheduleDate', e.target.value)}
+                    min={getMinDateTime()}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Để trống để đăng ngay. Tối thiểu 2 giờ sau hiện tại.
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={uploading || !selectedChannel || !sourceUrl}
-            className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-md font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center text-sm"
+            disabled={uploading || !selectedChannel}
+            className="w-full bg-blue-600 text-white px-4 py-3 rounded-md font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center text-sm shadow-sm"
           >
             {uploading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Đang xử lý...
+                Đang upload {videos.length} video...
               </>
             ) : (
               <>
                 <Upload className="w-4 h-4 mr-2" />
-                Upload Video
+                Upload {videos.length} Video{videos.length > 1 ? 's' : ''}
               </>
             )}
           </button>
         </form>
 
-        {/* Result */}
-        {result && (
-          <div className={`mt-4 p-3 rounded-md ${
-            result.success 
-              ? 'bg-green-50 border border-green-200' 
-              : 'bg-red-50 border border-red-200'
-          }`}>
-            <div className="flex items-start">
-              {result.success ? (
-                <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 mr-2 flex-shrink-0" />
-              ) : (
-                <XCircle className="w-4 h-4 text-red-600 mt-0.5 mr-2 flex-shrink-0" />
-              )}
-              <div className="flex-1">
-                <p className={`text-xs font-medium ${
-                  result.success ? 'text-green-800' : 'text-red-800'
-                }`}>
-                  {result.message}
-                </p>
-                {result.videoUrl && (
-                  <a
-                    href={result.videoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline mt-1 inline-block"
-                  >
-                    Xem video →
-                  </a>
-                )}
-              </div>
+        {/* Results */}
+        {results && results.length > 0 && (
+          <div className="mt-6 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-900">
+                Kết quả Upload
+              </h3>
+              <span className={`text-xs font-medium px-2 py-1 rounded ${
+                successCount === totalCount 
+                  ? 'bg-green-100 text-green-700' 
+                  : successCount > 0 
+                  ? 'bg-yellow-100 text-yellow-700' 
+                  : 'bg-red-100 text-red-700'
+              }`}>
+                {successCount}/{totalCount} thành công
+              </span>
             </div>
+
+            {results.map((result) => (
+              <div
+                key={result.index}
+                className={`p-3 rounded-md border ${
+                  result.success
+                    ? 'bg-green-50 border-green-200'
+                    : 'bg-red-50 border-red-200'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  {result.success ? (
+                    <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-semibold ${
+                        result.success ? 'text-green-800' : 'text-red-800'
+                      }`}>
+                        Video {result.index}
+                      </span>
+                      <span className="text-xs text-gray-400">•</span>
+                      <span className="text-xs text-gray-600 truncate">
+                        {result.sourceUrl}
+                      </span>
+                    </div>
+                    <p className={`text-xs mt-1 ${
+                      result.success ? 'text-green-700' : 'text-red-700'
+                    }`}>
+                      {result.message}
+                    </p>
+                    {result.videoUrl && (
+                      <a
+                        href={result.videoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline mt-1 inline-block"
+                      >
+                        Xem video →
+                      </a>
+                    )}
+                    {result.error && !result.success && (
+                      <p className="text-xs text-red-600 mt-1 font-mono">
+                        Lỗi: {result.error}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
