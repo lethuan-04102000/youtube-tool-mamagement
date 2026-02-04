@@ -310,6 +310,7 @@ exports.openBrowserWithProfile = async (req, res) => {
     const browserService = require('../services/browser.service');
     const sessionService = require('../services/session.service');
     const googleAuthService = require('../services/google.auth.service');
+    const { isLoggedInOnYouTube } = require('../helpers/youtube.check.helper');
     
     // Check if profile exists
     const hasProfile = sessionService.hasProfile(account.email);
@@ -321,8 +322,8 @@ exports.openBrowserWithProfile = async (req, res) => {
     }
 
     // Launch browser with profile (headless=false to show UI)
-    const browser = await browserService.launchBrowser(false, account.email);
-    const page = await browserService.createPage(browser);
+    let browser = await browserService.launchBrowser(false, account.email);
+    let page = await browserService.createPage(browser);
 
     // Track this browser
     openBrowsers.set(account.email, {
@@ -338,48 +339,118 @@ exports.openBrowserWithProfile = async (req, res) => {
 
     // Navigate to YouTube to check session
     await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 3000));
     
-    // Check if already logged in
-    const isLoggedIn = await googleAuthService.isLoggedIn(page);
+    // Check if already logged in using YouTube-specific check
+    let isLoggedIn = await isLoggedInOnYouTube(page);
+    let loginAttempted = false;
+    let loginSuccess = false;
+    let profileCleared = false;
     
-    if (!isLoggedIn && account.password) {
-      console.log(`🔐 Session not found, logging in with stored credentials...`);
-      try {
-        await googleAuthService.login(page, account.email, account.password);
-        console.log(`✅ Login successful for ${account.email}`);
-        
-        // Navigate back to YouTube after login
-        await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
-      } catch (loginError) {
-        console.error(`❌ Auto-login failed: ${loginError.message}`);
-        console.log(`ℹ️  Please login manually in the browser`);
-      }
-    } else if (!isLoggedIn && !account.password) {
-      console.log(`⚠️  No password stored, please login manually`);
-    } else {
-      console.log(`✅ Already logged in for ${account.email}`);
+    console.log(`📊 YouTube login status: ${isLoggedIn ? '✅ Logged in' : '❌ Not logged in'}`);
+    
+    if (!isLoggedIn && hasProfile) {
+      console.log(`⚠️  Session expired or not found for ${account.email}`);
+      
+      // If we have an existing profile but not logged in, likely session expired
+      // Clear profile and reopen fresh browser
+      console.log(`⚠️  Profile exists but session invalid - clearing...`);
+      
+      // Close current browser FIRST (while page is still valid)
+      await browser.close();
+      openBrowsers.delete(account.email);
+      
+      // Delete the old profile
+      sessionService.deleteProfile(account.email);
+      profileCleared = true;
+      
+      console.log(`✅ Profile cleared, reopening fresh browser for login...`);
+      
+      // Reopen browser without profile
+      browser = await browserService.launchBrowser(false, account.email);
+      page = await browserService.createPage(browser);
+      
+      // Update tracking
+      openBrowsers.set(account.email, {
+        browser: browser,
+        openedAt: new Date()
+      });
+      
+      browser.on('disconnected', () => {
+        console.log(`🔴 Browser closed for ${account.email}`);
+        openBrowsers.delete(account.email);
+      });
+      
+      console.log(`✅ Fresh browser opened, proceeding to login...`);
     }
     
-    console.log(`📂 Profile saved at: ${sessionService.getProfilePath(account.email)}`);
+    // Attempt login if not logged in
+    if (!isLoggedIn) {
+      if (account.password) {
+        console.log(`🔐 Attempting auto-login with stored credentials...`);
+        loginAttempted = true;
+        
+        try {
+          await googleAuthService.login(page, account.email, account.password);
+          
+          // Verify login was successful - go back to YouTube
+          console.log(`🔄 Navigating to YouTube to verify login...`);
+          await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
+          await new Promise(r => setTimeout(r, 3000));
+          
+          // Re-check login status using YouTube check
+          isLoggedIn = await isLoggedInOnYouTube(page);
+          
+          if (isLoggedIn) {
+            console.log(`✅ Auto-login successful for ${account.email}`);
+            loginSuccess = true;
+          } else {
+            console.error(`❌ Auto-login failed: Session check failed after login`);
+            console.log(`ℹ️  Please login manually in the browser`);
+          }
+        } catch (loginError) {
+          console.error(`❌ Auto-login failed: ${loginError.message}`);
+          console.log(`ℹ️  Please login manually in the browser`);
+        }
+      } else {
+        console.log(`⚠️  No password stored for ${account.email}`);
+        console.log(`ℹ️  Please login manually in the browser`);
+      }
+    } else {
+      console.log(`✅ Session valid - Already logged in as ${account.email}`);
+    }
+    
+    console.log(`📂 Profile path: ${sessionService.getProfilePath(account.email)}`);
     console.log(`ℹ️  Browser will stay open - close it manually when done`);
 
     // Don't close browser - let user interact with it
     // Browser will be closed manually by user
     
+    const responseMessage = isLoggedIn 
+      ? `Browser opened for ${account.email}. Session is valid.`
+      : loginAttempted 
+        ? `Browser opened for ${account.email}. ${loginSuccess ? 'Auto-login successful.' : 'Auto-login failed - please login manually.'}`
+        : `Browser opened for ${account.email}. Please login manually.`;
+    
     return res.json({
       success: true,
-      message: `Browser opened for ${account.email}. ${isLoggedIn ? 'Already logged in.' : 'Login attempted.'}`,
+      message: responseMessage,
       data: {
         email: account.email,
         hasExistingProfile: hasProfile,
-        wasLoggedIn: isLoggedIn,
-        autoLoginAttempted: !isLoggedIn && !!account.password,
+        profileCleared: profileCleared,
+        sessionValid: isLoggedIn,
+        loginAttempted: loginAttempted,
+        loginSuccess: loginSuccess,
         note: isLoggedIn 
-          ? 'Browser is open with existing session.' 
-          : account.password 
-            ? 'Login attempted. Check browser window.'
-            : 'No password stored. Please login manually.'
+          ? 'Browser is open with valid session.' 
+          : loginSuccess
+            ? 'Auto-login successful. You can continue working.'
+            : profileCleared
+              ? 'Old profile was cleared due to signed out status. Fresh browser opened for login.'
+              : account.password 
+                ? 'Auto-login failed. Check browser window and login manually.'
+                : 'No password stored. Please login manually in the browser.'
       }
     });
 
@@ -474,4 +545,12 @@ exports.closeBrowser = async (req, res) => {
       error: error.message
     });
   }
+};
+
+/**
+ * Get openBrowsers map for other controllers to check/reuse
+ * @returns {Map} openBrowsers map
+ */
+exports.getOpenBrowsersMap = () => {
+  return openBrowsers;
 };

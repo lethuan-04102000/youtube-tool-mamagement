@@ -202,7 +202,7 @@ class FacebDownloaderService {
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
-          '--window-size=1280,800',
+          '--window-size=1400,1200',
           '--disable-web-security'
         ]
       });
@@ -317,7 +317,7 @@ class FacebDownloaderService {
       
       browser = await puppeteer.launch({
         headless: false,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,800']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1400,1200']
       });
       
       const page = await browser.newPage();

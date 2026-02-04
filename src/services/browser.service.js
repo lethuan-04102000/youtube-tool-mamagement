@@ -33,7 +33,7 @@ class BrowserService {
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--disable-gpu',
-            '--window-size=1280,900',
+            '--window-size=1400,1200',
             '--disable-features=TranslateUI',
             '--disable-background-downloads-warning',
             '--no-first-run',
@@ -44,8 +44,8 @@ class BrowserService {
           ],
           ignoreDefaultArgs: ['--enable-automation'],
           defaultViewport: {
-            width: 1280,
-            height: 900
+            width: 1400,
+            height: 1200
           },
           timeout: 60000
         };

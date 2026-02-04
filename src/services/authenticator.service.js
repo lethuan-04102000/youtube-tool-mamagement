@@ -377,6 +377,27 @@ class AuthenticatorService {
     return clicked;
   }
 
+  /**
+   * Click "Turn on 2-Step Verification" button
+   * 
+   * IMPORTANT: This function uses strict filtering to avoid clicking wrong buttons:
+   * 
+   * 1. BLACKLIST approach:
+   *    - Skip buttons containing keywords: 'phone', 'number', 'add', 'skip', 'remind', 'not now'
+   *    - This prevents clicking "Add a phone number" button by mistake
+   * 
+   * 2. EXACT match requirement:
+   *    - Only accept buttons with EXACT text: "Turn on 2-Step Verification"
+   *    - No partial match to avoid ambiguity
+   * 
+   * 3. Visibility check:
+   *    - Skip disabled or hidden buttons
+   * 
+   * 4. Multiple fallback methods:
+   *    - Method 1: Find all buttons, collect info, filter with strict rules
+   *    - Method 2: Use evaluate with same filtering logic
+   *    - Method 3: Partial match as last resort (still with blacklist)
+   */
   async clickTurnOn2StepButton(page) {
     console.log('🔍 Đang tìm nút "Turn on 2-Step Verification"...');
     
@@ -398,18 +419,110 @@ class AuthenticatorService {
       await this.debugPageContent(page, `turn-on-2step-timeout-${Date.now()}`);
     }
 
-    // Method 1: Find by aria-label with exact match
+    // Method 1: Find ALL buttons first, then filter by EXACT match with blacklist
     try {
-      console.log('📍 Thử method 1: Tìm button với aria-label chính xác...');
-      const button = await page.$('button[aria-label="Turn on 2-Step Verification"]');
-      if (button) {
-        console.log('✅ Tìm thấy button với aria-label');
+      console.log('📍 Thử method 1: Tìm tất cả buttons và filter chính xác...');
+      const buttons = await page.$$('button[jsname="Pr7Yme"]');
+      console.log(`   Tìm thấy ${buttons.length} buttons với jsname="Pr7Yme"`);
+      
+      // Collect info about all buttons first
+      const buttonsInfo = [];
+      for (let i = 0; i < buttons.length; i++) {
+        const button = buttons[i];
+        const info = await page.evaluate(el => {
+          const ariaLabel = el.getAttribute('aria-label') || '';
+          const span = el.querySelector('span[jsname="V67aGc"]');
+          const text = span ? span.textContent?.trim() : el.textContent?.trim();
+          const isVisible = el.offsetParent !== null;
+          const isDisabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+          
+          return {
+            ariaLabel,
+            text,
+            isVisible,
+            isDisabled
+          };
+        }, button);
         
-        // Scroll to element first
-        await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
+        buttonsInfo.push({
+          index: i,
+          button,
+          ...info
+        });
+      }
+      
+      // Log all buttons
+      console.log('\n📋 Danh sách tất cả buttons:');
+      buttonsInfo.forEach((info, idx) => {
+        console.log(`   Button ${idx + 1}:`);
+        console.log(`      aria-label: "${info.ariaLabel}"`);
+        console.log(`      text: "${info.text}"`);
+        console.log(`      visible: ${info.isVisible}`);
+        console.log(`      disabled: ${info.isDisabled}`);
+      });
+      console.log('');
+      
+      // BLACKLIST: Skip buttons related to phone or other unwanted actions
+      const blacklistKeywords = ['phone', 'number', 'add', 'skip', 'remind', 'not now'];
+      
+      // WHITELIST: Only accept buttons with EXACT match
+      const validButtons = buttonsInfo.filter(info => {
+        // Must be visible and not disabled
+        if (!info.isVisible || info.isDisabled) {
+          console.log(`   ⏭️  Skip button ${info.index + 1} (not visible or disabled)`);
+          return false;
+        }
+        
+        // Check blacklist
+        const combinedText = (info.ariaLabel + ' ' + info.text).toLowerCase();
+        for (const keyword of blacklistKeywords) {
+          if (combinedText.includes(keyword)) {
+            console.log(`   ⏭️  Skip button ${info.index + 1} (blacklist keyword: "${keyword}")`);
+            return false;
+          }
+        }
+        
+        // Check for EXACT match with "Turn on 2-Step Verification"
+        const isExactMatch = 
+          info.ariaLabel === 'Turn on 2-Step Verification' || 
+          info.text === 'Turn on 2-Step Verification';
+        
+        if (!isExactMatch) {
+          console.log(`   ⏭️  Skip button ${info.index + 1} (not exact match)`);
+          return false;
+        }
+        
+        console.log(`   ✅ Button ${info.index + 1} is VALID (exact match + not blacklisted)`);
+        return true;
+      });
+      
+      if (validButtons.length === 0) {
+        console.log('❌ Không tìm thấy button hợp lệ sau khi filter');
+      } else if (validButtons.length === 1) {
+        console.log(`\n✅ Tìm thấy ĐÚNG 1 button hợp lệ tại index ${validButtons[0].index + 1}`);
+        
+        const targetButton = validButtons[0].button;
+        
+        // Scroll to element
+        await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), targetButton);
         await new Promise(r => setTimeout(r, 500));
         
-        await button.click();
+        await targetButton.click();
+        await new Promise(r => setTimeout(r, 4000));
+        console.log('✅ Đã click "Turn on 2-Step Verification"');
+        clicked = true;
+        return true;
+      } else {
+        console.log(`⚠️  Tìm thấy ${validButtons.length} buttons hợp lệ (lỗi logic?)`);
+        console.log('   Sẽ click button đầu tiên...');
+        
+        const targetButton = validButtons[0].button;
+        
+        // Scroll to element
+        await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), targetButton);
+        await new Promise(r => setTimeout(r, 500));
+        
+        await targetButton.click();
         await new Promise(r => setTimeout(r, 4000));
         console.log('✅ Đã click "Turn on 2-Step Verification"');
         clicked = true;
@@ -419,71 +532,94 @@ class AuthenticatorService {
       console.log('⚠️  Method 1 failed:', e.message);
     }
 
-    // Method 2: Find by jsname and verify aria-label
+    // Method 2: Use evaluate with strict filtering (fallback)
     if (!clicked) {
       try {
-        console.log('📍 Thử method 2: Tìm tất cả buttons với jsname="Pr7Yme"...');
-        const buttons = await page.$$('button[jsname="Pr7Yme"]');
-        console.log(`   Tìm thấy ${buttons.length} buttons với jsname="Pr7Yme"`);
-        
-        for (let i = 0; i < buttons.length; i++) {
-          const button = buttons[i];
-          const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), button);
-          const text = await page.evaluate(el => {
-            const span = el.querySelector('span[jsname="V67aGc"]');
-            return span ? span.textContent?.trim() : el.textContent?.trim();
-          }, button);
+        console.log('📍 Thử method 2: Dùng evaluate với strict filtering...');
+        clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button[jsname="Pr7Yme"]'));
           
-          console.log(`   Button ${i + 1}:`);
-          console.log(`      aria-label: "${ariaLabel}"`);
-          console.log(`      text: "${text}"`);
+          const blacklist = ['phone', 'number', 'add', 'skip', 'remind', 'not now'];
           
-          if (ariaLabel && ariaLabel.includes('Turn on 2-Step Verification')) {
-            console.log(`✅ Tìm thấy button chính xác tại index ${i + 1}`);
+          const validButton = buttons.find(btn => {
+            // Must be visible
+            if (btn.offsetParent === null || btn.disabled) {
+              return false;
+            }
             
-            // Scroll to element
-            await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
-            await new Promise(r => setTimeout(r, 500));
+            const ariaLabel = btn.getAttribute('aria-label') || '';
+            const span = btn.querySelector('span[jsname="V67aGc"]');
+            const text = span ? span.textContent?.trim() : btn.textContent?.trim();
+            const combinedText = (ariaLabel + ' ' + text).toLowerCase();
             
-            await button.click();
-            await new Promise(r => setTimeout(r, 4000));
-            console.log('✅ Đã click "Turn on 2-Step Verification"');
-            clicked = true;
+            // Check blacklist
+            for (const keyword of blacklist) {
+              if (combinedText.includes(keyword)) {
+                return false;
+              }
+            }
+            
+            // EXACT match only
+            return ariaLabel === 'Turn on 2-Step Verification' || 
+                   text === 'Turn on 2-Step Verification';
+          });
+          
+          if (validButton) {
+            validButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            validButton.click();
             return true;
           }
           
-          if (text && text.includes('Turn on 2-Step Verification')) {
-            console.log(`✅ Tìm thấy button qua text tại index ${i + 1}`);
-            
-            // Scroll to element
-            await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), button);
-            await new Promise(r => setTimeout(r, 500));
-            
-            await button.click();
-            await new Promise(r => setTimeout(r, 4000));
-            console.log('✅ Đã click "Turn on 2-Step Verification"');
-            clicked = true;
-            return true;
-          }
+          return false;
+        });
+
+        if (clicked) {
+          await new Promise(r => setTimeout(r, 4000));
+          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 2)');
+          return true;
         }
       } catch (e) {
         console.log('⚠️  Method 2 failed:', e.message);
       }
     }
 
-    // Method 3: Use evaluate to find and click by aria-label (partial match)
+    // Method 3: Partial match as last resort (but still with blacklist)
     if (!clicked) {
       try {
-        console.log('📍 Thử method 3: Dùng evaluate với aria-label partial match...');
+        console.log('📍 Thử method 3: Partial match với blacklist...');
         clicked = await page.evaluate(() => {
-          // Find by aria-label (partial match)
-          const button = document.querySelector('button[aria-label*="Turn on 2-Step"]');
-          if (button) {
-            console.log('Found button by aria-label partial match');
-            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            button.click();
+          const buttons = Array.from(document.querySelectorAll('button'));
+          
+          const blacklist = ['phone', 'number', 'add', 'skip', 'remind', 'not now'];
+          
+          const validButton = buttons.find(btn => {
+            // Must be visible
+            if (btn.offsetParent === null || btn.disabled) {
+              return false;
+            }
+            
+            const ariaLabel = btn.getAttribute('aria-label') || '';
+            const span = btn.querySelector('span[jsname="V67aGc"]');
+            const text = span ? span.textContent?.trim() : btn.textContent?.trim();
+            const combinedText = (ariaLabel + ' ' + text).toLowerCase();
+            
+            // Check blacklist first
+            for (const keyword of blacklist) {
+              if (combinedText.includes(keyword)) {
+                return false;
+              }
+            }
+            
+            // Partial match with "Turn on 2-Step"
+            return combinedText.includes('turn on 2-step');
+          });
+          
+          if (validButton) {
+            validButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            validButton.click();
             return true;
           }
+          
           return false;
         });
 
@@ -497,78 +633,10 @@ class AuthenticatorService {
       }
     }
 
-    // Method 4: Use evaluate to find by span text
-    if (!clicked) {
-      try {
-        console.log('📍 Thử method 4: Dùng evaluate tìm span với jsname="V67aGc"...');
-        clicked = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button'));
-          const turnOnBtn = buttons.find(btn => {
-            const span = btn.querySelector('span[jsname="V67aGc"]');
-            if (span) {
-              const text = span.textContent?.trim() || '';
-              return text.includes('Turn on 2-Step Verification') || 
-                     text.includes('Turn on 2-Step');
-            }
-            return false;
-          });
-          
-          if (turnOnBtn) {
-            console.log('Found button by span text');
-            turnOnBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            turnOnBtn.click();
-            return true;
-          }
-          
-          return false;
-        });
-
-        if (clicked) {
-          await new Promise(r => setTimeout(r, 4000));
-          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 4)');
-          return true;
-        }
-      } catch (e) {
-        console.log('⚠️  Method 4 failed:', e.message);
-      }
-    }
-
-    // Method 5: Find by class and jscontroller
-    if (!clicked) {
-      try {
-        console.log('📍 Thử method 5: Tìm button bằng class UywwFc-LgbsSe...');
-        clicked = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button.UywwFc-LgbsSe[jscontroller="O626Fe"]'));
-          
-          for (const btn of buttons) {
-            const ariaLabel = btn.getAttribute('aria-label') || '';
-            const span = btn.querySelector('span[jsname="V67aGc"]');
-            const text = span ? span.textContent?.trim() : '';
-            
-            if (ariaLabel.includes('Turn on 2-Step') || text.includes('Turn on 2-Step')) {
-              console.log('Found button by class and jscontroller');
-              btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              btn.click();
-              return true;
-            }
-          }
-          
-          return false;
-        });
-
-        if (clicked) {
-          await new Promise(r => setTimeout(r, 4000));
-          console.log('✅ Đã click "Turn on 2-Step Verification" bằng evaluate (method 5)');
-          return true;
-        }
-      } catch (e) {
-        console.log('⚠️  Method 5 failed:', e.message);
-      }
-    }
-
     if (!clicked) {
       console.log('❌ Không tìm thấy nút "Turn on 2-Step Verification"');
       console.log('💡 Có thể button chưa xuất hiện hoặc đã có 2FA rồi');
+      console.log('🔍 Tất cả methods đều đã kiểm tra blacklist để tránh click nhầm vào "Add phone number"');
       
       // Save debug info
       await this.debugPageContent(page, `turn-on-2step-not-found-${Date.now()}`);
