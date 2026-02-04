@@ -209,7 +209,7 @@ exports.exportAccounts = async (req, res) => {
     const accounts = await AccountYoutube.findAll({
       attributes: [
         'id', 'email', 'password', 'channel_name', 'channel_link',
-        'avatar_url', 'image_name', 'is_authenticator', 'is_create_channel', 'is_upload_avatar',
+        'avatar_url', 'image_name', 'code_authenticators', 'is_authenticator', 'is_create_channel', 'is_upload_avatar',
         'createdAt', 'updatedAt'
       ],
       order: [['createdAt', 'ASC']]
@@ -217,7 +217,7 @@ exports.exportAccounts = async (req, res) => {
 
     const headers = [
       'id','email','password','channel_name','channel_link',
-      'avatar_url','image_name','is_authenticator','is_create_channel','is_upload_avatar',
+      'avatar_url','image_name','code_authenticators','is_authenticator','is_create_channel','is_upload_avatar',
       'createdAt','updatedAt'
     ];
 
@@ -240,6 +240,7 @@ exports.exportAccounts = async (req, res) => {
         a.channel_link || '',
         a.avatar_url || '',
         a.image_name || '',
+        a.code_authenticators || '',
         a.is_authenticator ? 'true' : 'false',
         a.is_create_channel ? 'true' : 'false',
         a.is_upload_avatar ? 'true' : 'false',
