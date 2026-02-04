@@ -12,33 +12,111 @@ class GoogleAuthService {
         timeout: 60000 
       });
       
-      // Email
-      console.log('📧 Nhập email...');
-      await page.waitForSelector('input[type="email"]', { timeout: 20000 });
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 2000));
       
-      // Clear and type email
-      await page.click('input[type="email"]');
-      await page.evaluate(() => {
-        const input = document.querySelector('input[type="email"]');
-        if (input) input.value = '';
-      });
-      await page.type('input[type="email"]', email, { delay: 100 });
+      // Check if on AccountChooser page first
+      const currentUrl = page.url();
+      if (currentUrl.includes('accountchooser') || currentUrl.includes('AccountChooser')) {
+        console.log('📋 Detected AccountChooser page, checking for account...');
+        
+        // Check if account is signed out first
+        const accountStatus = await page.evaluate((targetEmail) => {
+          const accountItems = document.querySelectorAll('[data-identifier]');
+          
+          for (const item of accountItems) {
+            const emailAttr = item.getAttribute('data-identifier');
+            const emailText = item.querySelector('[data-email]');
+            
+            if (emailAttr === targetEmail || (emailText && emailText.textContent === targetEmail)) {
+              // Check if this account is signed out
+              const signedOutText = item.querySelector('.lrLKwc');
+              if (signedOutText && signedOutText.textContent.toLowerCase().includes('signed out')) {
+                return 'signed_out';
+              }
+              return 'active';
+            }
+          }
+          return 'not_found';
+        }, email);
+        
+        console.log(`📊 Account status: ${accountStatus}`);
+        
+        if (accountStatus === 'signed_out') {
+          console.log('⚠️  Account is signed out, clicking "Use another account"...');
+          
+          // Click "Use another account" to go to fresh login page
+          const useAnotherClicked = await page.evaluate(() => {
+            const useAnotherBtn = document.querySelector('[jsname="rwl3qc"]');
+            if (useAnotherBtn) {
+              useAnotherBtn.click();
+              return true;
+            }
+            return false;
+          });
+          
+          if (useAnotherClicked) {
+            console.log('✅ Clicked "Use another account", waiting for login page...');
+            await new Promise(r => setTimeout(r, 3000));
+          } else {
+            console.log('⚠️  Could not click "Use another account", continuing with email input...');
+          }
+        } else if (accountStatus === 'active') {
+          // Try to click on the account if it exists and is active
+          const accountClicked = await this.clickAccountInChooser(page, email);
+          
+          if (accountClicked) {
+            console.log('✅ Account clicked, continuing to password...');
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Now should be on password page, continue with password entry
+            const hasPasswordInput = await page.$('input[type="password"]');
+            if (!hasPasswordInput) {
+              console.log('⚠️  No password input found, assuming already logged in');
+              return true;
+            }
+            // Continue to password entry below
+          } else {
+            console.log('⚠️  Could not click account, continuing with full login...');
+          }
+        } else {
+          console.log('ℹ️  Account not found in chooser, continuing with email input...');
+        }
+      }
       
-      // Click Next button
-      await new Promise(r => setTimeout(r, 1500));
-      await page.evaluate(() => {
-        const btn = document.querySelector('#identifierNext');
-        if (btn) btn.click();
-      });
+      // Check if email input is present (not already on password page)
+      const hasEmailInput = await page.$('input[type="email"]');
       
-      await new Promise(r => setTimeout(r, 4000));
+      if (hasEmailInput) {
+        // Email
+        console.log('📧 Nhập email...');
+        await page.waitForSelector('input[type="email"]', { timeout: 20000 });
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Clear and type email
+        await page.click('input[type="email"]');
+        await page.evaluate(() => {
+          const input = document.querySelector('input[type="email"]');
+          if (input) input.value = '';
+        });
+        await page.type('input[type="email"]', email, { delay: 100 });
+        
+        // Click Next button
+        await new Promise(r => setTimeout(r, 1500));
+        await page.evaluate(() => {
+          const btn = document.querySelector('#identifierNext');
+          if (btn) btn.click();
+        });
+        
+        await new Promise(r => setTimeout(r, 4000));
 
-      // Check email error
-      const errorEmail = await page.$('.o6cuMc');
-      if (errorEmail) {
-        const errorText = await page.evaluate(el => el?.textContent, errorEmail);
-        throw new Error(`Email error: ${errorText}`);
+        // Check email error
+        const errorEmail = await page.$('.o6cuMc');
+        if (errorEmail) {
+          const errorText = await page.evaluate(el => el?.textContent, errorEmail);
+          throw new Error(`Email error: ${errorText}`);
+        }
+      } else {
+        console.log('ℹ️  Email input not found, assuming already past email step');
       }
 
       // Password
@@ -250,25 +328,81 @@ class GoogleAuthService {
    */
   async isLoggedIn(page) {
     try {
-      // Truy cập trang Google để check session
-      await page.goto('https://accounts.google.com/ServiceLogin', {
+      // Navigate to AccountChooser page to check session
+      console.log('🔍 Checking login status...');
+      await page.goto('https://accounts.google.com/v3/signin/accountchooser?flowName=GlifWebSignIn&flowEntry=ServiceLogin', {
         waitUntil: 'networkidle2',
         timeout: 30000
       });
       await new Promise(r => setTimeout(r, 2000));
 
       const currentUrl = page.url();
+      console.log(`📍 Current URL: ${currentUrl}`);
 
-      // Nếu URL chứa "myaccount" hoặc redirect về Google account page
-      // thì đã đăng nhập rồi
+      // Check if on AccountChooser page with "Choose an account" heading
+      const accountChooserCheck = await page.evaluate(() => {
+        const heading = document.querySelector('#headingText') || 
+                       document.querySelector('h1[data-a11y-title-piece]') ||
+                       document.querySelector('[data-a11y-title-piece]');
+        
+        const hasChooseHeading = heading && 
+          (heading.textContent.toLowerCase().includes('choose') ||
+           heading.textContent.toLowerCase().includes('chọn tài khoản'));
+        
+        // Check for email input (new login)
+        const hasEmailInput = !!document.querySelector('input[type="email"]');
+        
+        // Check for account list (already have sessions)
+        const accountList = document.querySelectorAll('[data-identifier]');
+        
+        // Check if any account shows "Signed out" status
+        let hasSignedOutAccount = false;
+        accountList.forEach(item => {
+          const signedOutText = item.querySelector('.lrLKwc');
+          if (signedOutText && signedOutText.textContent.toLowerCase().includes('signed out')) {
+            hasSignedOutAccount = true;
+          }
+        });
+        
+        return {
+          hasChooseHeading,
+          hasEmailInput,
+          accountCount: accountList.length,
+          hasSignedOutAccount,
+          heading: heading?.textContent || ''
+        };
+      });
+
+      console.log(`🔍 Page check:`, JSON.stringify(accountChooserCheck, null, 2));
+
+      // If has account list with "Signed out" status → session expired, need full re-login
+      if (accountChooserCheck.accountCount > 0 && accountChooserCheck.hasSignedOutAccount) {
+        console.log(`⚠️  Account found but SIGNED OUT - session expired`);
+        console.log('ℹ️  Browser profile needs to be cleared and re-login');
+        return false; // Return false to trigger profile cleanup in controller
+      }
+
+      // If has "Choose an account" heading with active accounts → can just click to continue
+      if (accountChooserCheck.hasChooseHeading && accountChooserCheck.accountCount > 0 && !accountChooserCheck.hasSignedOutAccount) {
+        console.log(`✅ Account chooser with active session (${accountChooserCheck.accountCount} accounts)`);
+        console.log('ℹ️  Can click on account to continue (no need to login again)');
+        return true; // Session is still valid, just need to select account
+      }
+
+      // If has email input → definitely not logged in
+      if (accountChooserCheck.hasEmailInput) {
+        console.log('ℹ️  Not logged in (Email input found)');
+        return false;
+      }
+
+      // If redirected to myaccount, user is logged in
       if (currentUrl.includes('myaccount.google.com') || 
-          currentUrl.includes('accounts.google.com/AccountChooser') ||
           currentUrl.includes('accounts.google.com/b/')) {
-        console.log('✅ Đã đăng nhập Google (session còn hiệu lực)');
+        console.log('✅ Logged in (Redirected to account page)');
         return true;
       }
 
-      // Kiểm tra xem có profile avatar không (dấu hiệu đã login)
+      // Check for profile avatar as indicator
       const hasProfileAvatar = await page.evaluate(() => {
         return !!document.querySelector('img[alt*="Google"]') || 
                !!document.querySelector('[data-ogsr-up]') ||
@@ -276,22 +410,68 @@ class GoogleAuthService {
       });
 
       if (hasProfileAvatar) {
-        console.log('✅ Đã đăng nhập Google (tìm thấy profile)');
+        console.log('✅ Logged in (Profile avatar found)');
         return true;
       }
 
-      // Kiểm tra xem có input email không (dấu hiệu chưa login)
-      const hasEmailInput = await page.$('input[type="email"]');
-      if (hasEmailInput) {
-        console.log('ℹ️  Chưa đăng nhập Google');
-        return false;
-      }
-
-      console.log('✅ Đã đăng nhập Google');
-      return true;
+      console.log('⚠️  Unclear login status, assuming NOT logged in');
+      return false;
 
     } catch (error) {
       console.log(`⚠️  Không xác định được trạng thái login: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Click vào account trong AccountChooser list
+   * @param {Page} page - Puppeteer page
+   * @param {string} email - Email của account cần click
+   * @returns {Promise<boolean>} - true nếu click thành công
+   */
+  async clickAccountInChooser(page, email) {
+    try {
+      console.log(`🖱️  Đang click vào account: ${email}`);
+      
+      // Wait for account list to load
+      await page.waitForSelector('[data-identifier]', { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // Click on the account with matching email
+      const clicked = await page.evaluate((targetEmail) => {
+        const accountItems = document.querySelectorAll('[data-identifier]');
+        
+        for (const item of accountItems) {
+          const emailAttr = item.getAttribute('data-identifier');
+          const emailText = item.querySelector('[data-email]');
+          
+          if (emailAttr === targetEmail || (emailText && emailText.textContent === targetEmail)) {
+            // Check if this account is signed out
+            const signedOutText = item.querySelector('.lrLKwc');
+            if (signedOutText && signedOutText.textContent.toLowerCase().includes('signed out')) {
+              console.log('⚠️  Account is signed out, cannot click');
+              return false;
+            }
+            
+            // Click the account
+            item.click();
+            return true;
+          }
+        }
+        return false;
+      }, email);
+      
+      if (clicked) {
+        console.log('✅ Đã click vào account');
+        await new Promise(r => setTimeout(r, 3000));
+        return true;
+      } else {
+        console.log('❌ Không tìm thấy account hoặc account đã signed out');
+        return false;
+      }
+      
+    } catch (error) {
+      console.error(`❌ Lỗi khi click account: ${error.message}`);
       return false;
     }
   }

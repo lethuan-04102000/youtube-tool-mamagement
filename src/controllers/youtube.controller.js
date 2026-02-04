@@ -4,6 +4,7 @@ const googleAuthService = require('../services/google.auth.service');
 const youtubeService = require('../services/youtube.service');
 const facebDownloader = require('../services/faceb.downloader.service');
 const { fileHelper } = require('../helpers');
+const { ensureLoggedIn } = require('../helpers/session.helper');
 const path = require('path');
 
 class YoutubeController {
@@ -92,19 +93,80 @@ class YoutubeController {
 
       console.log(`🖼️  Tìm thấy ${accounts.length} accounts cần upload avatar\n`);
 
+      // STEP 1: Download all avatars in parallel (10 tabs at once)
+      console.log('\n📥 STEP 1: Downloading avatars from Facebook...\n');
+      
+      const avatarsDir = path.join(__dirname, '../../avatars');
+      const fs = require('fs');
+      
+      // Filter accounts that need download
+      const accountsNeedDownload = accounts.filter(acc => {
+        if (acc.image_name && fs.existsSync(path.join(avatarsDir, acc.image_name))) {
+          console.log(`✓ ${acc.email}: Avatar already exists (${acc.image_name})`);
+          return false;
+        }
+        return true;
+      });
+
+      if (accountsNeedDownload.length > 0) {
+        console.log(`\n🔽 Need to download ${accountsNeedDownload.length} avatars...\n`);
+        
+        const downloadResults = await facebDownloader.downloadMultipleAvatars(
+          accountsNeedDownload,
+          avatarsDir
+        );
+
+        // Update image_name in database for successfully downloaded avatars
+        for (const result of downloadResults) {
+          if (result.success && result.imageName) {
+            await AccountYoutube.update(
+              { image_name: result.imageName },
+              { where: { id: result.id } }
+            );
+            console.log(`💾 Updated image_name for ${result.email}: ${result.imageName}`);
+          }
+        }
+
+        console.log(`\n✅ Download completed: ${downloadResults.filter(r => r.success).length}/${downloadResults.length} success\n`);
+      } else {
+        console.log('\n✓ All avatars already downloaded, skipping download step\n');
+      }
+
+      // Reload accounts to get updated image_name
+      const accountsWithAvatars = await AccountYoutube.findAll({
+        where: {
+          is_create_channel: true,
+          channel_link: { [Op.ne]: null },
+          is_upload_avatar: false,
+          avatar_url: { [Op.ne]: null },
+          image_name: { [Op.ne]: null } // Only accounts with downloaded avatar
+        }
+      });
+
+      if (accountsWithAvatars.length === 0) {
+        return res.json({
+          success: false,
+          message: 'No accounts have downloaded avatars to upload',
+          data: []
+        });
+      }
+
+      // STEP 2: Upload avatars to YouTube one by one
+      console.log(`\n📤 STEP 2: Uploading ${accountsWithAvatars.length} avatars to YouTube...\n`);
+
       const results = [];
 
       // Process accounts one by one
-      for (let i = 0; i < accounts.length; i++) {
-        const account = accounts[i];
-        console.log(`\n📦 Processing ${i + 1}/${accounts.length}: ${account.email}...`);
+      for (let i = 0; i < accountsWithAvatars.length; i++) {
+        const account = accountsWithAvatars[i];
+        console.log(`\n📦 Processing ${i + 1}/${accountsWithAvatars.length}: ${account.email}...`);
         
         const result = await uploadAvatarForAccount(account);
         results.push(result);
         
         console.log(`✅ Completed: ${result.success ? 'Success' : 'Failed'}\n`);
         
-        if (i < accounts.length - 1) {
+        if (i < accountsWithAvatars.length - 1) {
           console.log('⏳ Waiting 3s before next account...\n');
           await new Promise(r => setTimeout(r, 3000));
         }
@@ -118,7 +180,7 @@ class YoutubeController {
         message: `Completed: ${successCount} success, ${failCount} failed`,
         data: results,
         summary: {
-          total: accounts.length,
+          total: results.length,
           success: successCount,
           failed: failCount
         }
@@ -146,14 +208,8 @@ async function createChannelForAccount(account) {
     browser = await browserService.launchBrowser(headless, account.email);
     const page = await browserService.createPage(browser);
 
-    // Check session first — only login if necessary
-    const isLoggedIn = await googleAuthService.isLoggedIn(page);
-    if (!isLoggedIn) {
-      console.log(`🔐 [${account.email}] Session not found or expired — performing login`);
-      await googleAuthService.login(page, account.email, account.password);
-    } else {
-      console.log(`🎯 [${account.email}] Using saved session (skip login)`);
-    }
+    // Check session and auto re-login if expired
+    await ensureLoggedIn(page, account.email, account.password);
 
     // Create channel
     const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
@@ -186,9 +242,9 @@ async function createChannelForAccount(account) {
     // Avatar upload is now a separate step - use POST /api/v1/youtube/upload-avatar
     console.log('ℹ️  Avatar upload is a separate step. Download avatars first, then upload.');
 
-    await googleAuthService.logout(page);
+    // Close browser WITHOUT logout to keep cookies/session
     await browser.close();
-    console.log(`✅ [${account.email}] Browser closed`);
+    console.log(`✅ [${account.email}] Browser closed (session saved)`);
 
     return {
       email: account.email,
@@ -218,6 +274,7 @@ async function createChannelForAccount(account) {
 
 async function uploadAvatarForAccount(account) {
   let browser = null;
+  let shouldCloseBrowser = true; // Flag to track if we should close browser
   
   try {
     // Extract channel ID using helper
@@ -228,51 +285,43 @@ async function uploadAvatarForAccount(account) {
 
     console.log(`\n🌐 [${account.email}] Launching browser...`);
     
-    // Use HEADLESS for YouTube operations
-    const headless = process.env.HEADLESS === 'true';
-    // Launch browser with profile to reuse session when available
-    browser = await browserService.launchBrowser(headless, account.email);
-    const page = await browserService.createPage(browser);
-
-    // Check session first — only login if necessary
-    const isLoggedIn = await googleAuthService.isLoggedIn(page);
-    if (!isLoggedIn) {
-      console.log(`🔐 [${account.email}] Session not found or expired — performing login`);
-      await googleAuthService.login(page, account.email, account.password);
+    // Check if browser is already open (from accounts.controller openBrowsers)
+    // Import the openBrowsers map from accounts.controller
+    const accountsController = require('./accounts.controller');
+    const openBrowsers = accountsController.getOpenBrowsersMap?.() || new Map();
+    
+    let page;
+    
+    if (openBrowsers.has(account.email)) {
+      console.log(`♻️  [${account.email}] Reusing already open browser...`);
+      const browserInfo = openBrowsers.get(account.email);
+      browser = browserInfo.browser;
+      shouldCloseBrowser = false; // Don't close - user opened it manually
+      
+      // Create new page in existing browser
+      page = await browserService.createPage(browser);
     } else {
-      console.log(`🎯 [${account.email}] Using saved session (skip login)`);
+      console.log(`🆕 [${account.email}] Launching new browser...`);
+      // Use HEADLESS for YouTube operations
+      const headless = process.env.HEADLESS === 'true';
+      // Launch browser with profile to reuse session when available
+      browser = await browserService.launchBrowser(headless, account.email);
+      page = await browserService.createPage(browser);
     }
+
+    // Check session and auto re-login if expired
+    await ensureLoggedIn(page, account.email, account.password);
 
     const avatarsDir = path.join(__dirname, '../../avatars');
     const fs = require('fs');
-    let avatarPath = null;
-    let imageName = account.image_name;
     
-    // Check if avatar already downloaded
-    if (account.image_name && fs.existsSync(path.join(avatarsDir, account.image_name))) {
-      // Use existing file
-      avatarPath = path.join(avatarsDir, account.image_name);
-      console.log(`📸 Using downloaded avatar: ${account.image_name}`);
-    } else if (account.avatar_url) {
-      // Download now
-      console.log(`📥 Downloading avatar from: ${account.avatar_url}`);
-      const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
-      avatarPath = await facebDownloader.downloadAvatar(
-        account.avatar_url,
-        avatarsDir,
-        fileName
-      );
-      imageName = path.basename(avatarPath);
-      
-      // Save image_name to DB
-      await AccountYoutube.update(
-        { image_name: imageName },
-        { where: { id: account.id } }
-      );
-      console.log(`� Saved image_name: ${imageName}`);
-    } else {
-      throw new Error('No avatar_url or image_name available');
+    // Check if avatar file exists
+    if (!account.image_name || !fs.existsSync(path.join(avatarsDir, account.image_name))) {
+      throw new Error('Avatar file not found. Please download avatars first.');
     }
+
+    const avatarPath = path.join(avatarsDir, account.image_name);
+    console.log(`📸 Using avatar file: ${account.image_name}`);
 
     // Upload avatar to YouTube Studio
     await youtubeService.uploadAvatar(page, channelId, avatarPath);
@@ -285,21 +334,28 @@ async function uploadAvatarForAccount(account) {
 
     console.log(`💾 [${account.email}] Đã upload avatar`);
 
-    await googleAuthService.logout(page);
-    await browser.close();
-    console.log(`✅ [${account.email}] Browser closed`);
+    // Close browser only if we launched it (not if reusing user's open browser)
+    if (shouldCloseBrowser) {
+      await browser.close();
+      console.log(`✅ [${account.email}] Browser closed (session saved)`);
+    } else {
+      // Close only the page we created
+      await page.close();
+      console.log(`✅ [${account.email}] Page closed (browser kept open for user)`);
+    }
 
     return {
       email: account.email,
       success: true,
       channelId,
-      avatar: imageName
+      avatar: account.image_name
     };
 
   } catch (error) {
     console.error(`❌ [${account.email}] Error:`, error.message);
     
-    if (browser) {
+    // Only close browser if we launched it
+    if (browser && shouldCloseBrowser) {
       try {
         await browser.close();
       } catch (e) {

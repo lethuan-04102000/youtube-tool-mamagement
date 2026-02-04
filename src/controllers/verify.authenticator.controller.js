@@ -441,10 +441,14 @@ async function setupSingleAccountWithBrowser(account) {
     
     // Use HEADLESS_AUTHENTICATOR for authenticator setup
     const headless = process.env.HEADLESS_AUTHENTICATOR === 'true';
-    // Launch browser with profile for this email so session can be persisted
-    browser = await browserService.launchBrowser(headless, account.email);
     
-    const result = await setupSingleAccount(browser, account, { profileEmail: account.email });
+    // ❌ DO NOT use profile for import/verify - always start fresh
+    // Launch browser WITHOUT profile to ensure clean state
+    browser = await browserService.launchBrowser(headless, null); // Pass null to skip profile
+    
+    const result = await setupSingleAccount(browser, account, { 
+      profileEmail: null  // Explicitly no profile
+    });
     
     await browser.close();
     console.log(`✅ [${account.email}] Browser closed`);
@@ -475,13 +479,10 @@ async function setupSingleAccount(browser, account, options = {}) {
   const page = await browserService.createPage(browser);
   
   try {
-    // If not using profile, clear session to start fresh. If profile is used, preserve session.
-    const usingProfile = !!options.profileEmail;
-    if (!usingProfile) {
-      await browserService.clearSession(page);
-    } else {
-      console.log(`📂 Using profile for ${options.profileEmail}, preserving existing session`);
-    }
+    // Always clear session for import/verify - start fresh
+    const usingProfile = false; // Never use profile for import/verify
+    console.log(`🆕 Starting fresh - clearing any existing session`);
+    await browserService.clearSession(page);
 
     // Check if account already has authenticator
     const existingAccount = await AccountYoutube.findOne({
@@ -498,26 +499,15 @@ async function setupSingleAccount(browser, account, options = {}) {
       console.log(`🔑 Secret key: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)}`);
       skipAuth = true;
       
-      // Just login - no need to navigate to 2FA settings
-      console.log('🔐 Đang login...');
-      // If using profile, session may already be active; only login if not logged in
-      if (!usingProfile || !(await googleAuthService.isLoggedIn(page))) {
-        await googleAuthService.login(page, account.email, account.password);
-      } else {
-        console.log('🎯 Session active via profile, skipping login');
-      }
-      console.log('✅ Login thành công, sẵn sàng tạo channel');
+      // Login fresh (no profile)
+      console.log('🔐 Đang login fresh (no cached session)...');
+      await googleAuthService.login(page, account.email, account.password);
+      console.log('✅ Login thành công, sẵn sàng kiểm tra channel');
       
     } else {
       // Setup 2FA flow
       console.log('🔐 Đang setup 2FA...');
-      
-      // If using profile and already logged in, skip login step
-      if (!usingProfile || !(await googleAuthService.isLoggedIn(page))) {
-        await googleAuthService.login(page, account.email, account.password);
-      } else {
-        console.log('🎯 Session active via profile, skipping login before 2FA setup');
-      }
+      await googleAuthService.login(page, account.email, account.password);
       await googleAuthService.navigateTo2FASettings(page);
 
       const clickedAuth = await authenticatorService.clickAuthenticatorLink(page);
@@ -611,13 +601,42 @@ async function setupSingleAccount(browser, account, options = {}) {
       where: { email: account.email }
     });
 
-    console.log(`   is_authenticator: ${accountAfterAuth.is_authenticator}`);
-    console.log(`   is_create_channel: ${accountAfterAuth.is_create_channel}`);
+    console.log(`   is_authenticator: ${accountAfterAuth.is_authenticator} (type: ${typeof accountAfterAuth.is_authenticator})`);
+    console.log(`   is_create_channel: ${accountAfterAuth.is_create_channel} (type: ${typeof accountAfterAuth.is_create_channel})`);
     console.log(`   channel_link: ${accountAfterAuth.channel_link || 'null'}`);
 
     let channelInfo = { name: '', link: '' };
     let avatarUploaded = false;
     let avatarName = '';
+
+    // Skip channel creation AND avatar upload if is_create_channel is already true
+    // Check both true and 1 (in case of DB type inconsistency)
+    if (accountAfterAuth.is_create_channel === true || accountAfterAuth.is_create_channel === 1) {
+      console.log('✅ Account đã có channel (is_create_channel=true), skip tạo channel và upload avatar');
+      channelInfo.link = accountAfterAuth.channel_link;
+      channelInfo.name = accountAfterAuth.channel_name;
+      
+      // DON'T logout - preserve session/cookies
+      // await googleAuthService.logout(page);
+      console.log('✅ Giữ session (không logout để preserve cookies)');
+      
+      await page.close();
+
+      return {
+        email: account.email,
+        password: account.password,
+        channel_name: account.channel_name,
+        success: true,
+        secretKey: secretKey,
+        otpCode: totp,
+        skippedAuth: skipAuth,
+        channelCreated: false, // Already existed
+        channelLink: channelInfo.link,
+        avatarUploaded: false, // Skipped
+        avatar: '',
+        skippedChannel: true // Flag to indicate we skipped channel creation
+      };
+    }
 
     // Create channel if not exists
     if (!accountAfterAuth.is_create_channel || !accountAfterAuth.channel_link) {
@@ -730,12 +749,9 @@ async function setupSingleAccount(browser, account, options = {}) {
 
     console.log('🎉 Setup hoàn tất!');
 
-    // If we used a profile for this account, don't logout so the session is persisted for future runs
-    if (!usingProfile) {
-      await googleAuthService.logout(page);
-    } else {
-      console.log(`📂 Keeping profile for ${options.profileEmail} (not logging out)`);
-    }
+    // DON'T logout - preserve session/cookies
+    // await googleAuthService.logout(page);
+    console.log('✅ Giữ session (không logout để preserve cookies)');
     
     await page.close();
 
