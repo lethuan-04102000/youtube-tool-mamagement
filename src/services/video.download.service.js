@@ -44,7 +44,8 @@ class VideoDownloadService {
         console.log(`   Account: ${this.email}`);
       }
 
-      browser = await browserService.launchBrowser(false);
+      // Launch browser with profile if email provided
+      browser = await browserService.launchBrowser(false, this.email);
       page = await browserService.createPage(browser);
 
       // Cấu hình download behavior
@@ -116,6 +117,14 @@ class VideoDownloadService {
    */
   async clickSearchButton(page) {
     const clicked = await page.evaluate(() => {
+      // Case 1: Button với onclick="ksearchvideo" hoặc class="btn-red"
+      const ksearchBtn = document.querySelector('button[onclick*="ksearchvideo"], button.btn-red');
+      if (ksearchBtn) {
+        ksearchBtn.click();
+        return true;
+      }
+
+      // Case 2: Button có text "Tải xuống" hoặc "Download"
       const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
       const btn = buttons.find(b => {
         const text = (b.textContent || b.value || '').toLowerCase();
@@ -126,6 +135,7 @@ class VideoDownloadService {
         return true;
       }
 
+      // Case 3: Submit button trong form
       const form = document.querySelector('form');
       if (form) {
         const submitBtn = form.querySelector('button, input[type="submit"]');
@@ -271,7 +281,7 @@ class VideoDownloadService {
 
     while (Date.now() - startTime < maxWait && !clicked) {
       clicked = await page.evaluate((q) => {
-        // Tìm trong table rows
+        // PRIORITY 1: Tìm trong table rows - hỗ trợ cả <a> và <button>
         const rows = document.querySelectorAll('tr');
         for (const row of rows) {
           const rowText = row.textContent.toLowerCase();
@@ -280,18 +290,41 @@ class VideoDownloadService {
             : (rowText.includes('360p') || rowText.includes('sd') || rowText.includes('480p'));
 
           if (isMatch) {
-            const link = row.querySelector('a');
-            if (link && link.textContent.toLowerCase().includes('tải xuống')) {
-              link.click();
+            // Ưu tiên tìm link "Tải xuống" trực tiếp
+            const downloadLink = row.querySelector('a.download-link-fb, a[href*="download"]');
+            if (downloadLink && downloadLink.textContent.toLowerCase().includes('tải xuống')) {
+              console.log('✅ Tìm thấy link "Tải xuống" trong row:', rowText.substring(0, 50));
+              downloadLink.click();
+              return true;
+            }
+
+            // Nếu không có link "Tải xuống", tìm button "Render"
+            const buttons = row.querySelectorAll('button');
+            for (const btn of buttons) {
+              const btnText = btn.textContent.trim().toLowerCase();
+              // Check for "Render" button or button with convertFile onclick
+              if (btnText === 'render' || btn.onclick?.toString().includes('convertFile')) {
+                console.log('✅ Tìm thấy button "Render" trong row:', rowText.substring(0, 50));
+                btn.click();
+                return true;
+              }
+            }
+
+            // Fallback: any link with "Tải xuống"
+            const anyLink = row.querySelector('a');
+            if (anyLink && anyLink.textContent.toLowerCase().includes('tải xuống')) {
+              console.log('✅ Tìm thấy link trong row (fallback):', rowText.substring(0, 50));
+              anyLink.click();
               return true;
             }
           }
         }
 
-        // Fallback: tìm bất kỳ link download nào
-        const allLinks = Array.from(document.querySelectorAll('a'));
+        // PRIORITY 2: Fallback - tìm bất kỳ link download nào
+        const allLinks = Array.from(document.querySelectorAll('a.download-link-fb, a[href*="download"]'));
         const downloadLink = allLinks.find(a => a.textContent.toLowerCase().includes('tải xuống'));
         if (downloadLink) {
+          console.log('✅ Tìm thấy link "Tải xuống" (fallback toàn trang)');
           downloadLink.click();
           return true;
         }

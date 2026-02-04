@@ -5,11 +5,13 @@ import { usePathname } from 'next/navigation'
 import { 
   PlayCircle, 
   List,
-  Video
+  Video,
+  Upload
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Danh sách kênh', href: '/channels', icon: List },
+  { name: 'Upload Video', href: '/upload-video', icon: Upload },
   { name: 'Tăng lượt xem', href: '/boost-views', icon: PlayCircle },
   { name: 'Video đã tải', href: '/videos', icon: Video },
 ]

@@ -13,7 +13,7 @@
     "build": "./build-prod.sh",
     "build:frontend": "cd frontend && npm run build",
     "start:frontend": "cd frontend && npm start",
-    "setup": "npm install && npm run install:frontend && npx playwright install firefox",
+    "setup": "npm install && npm run install:frontend",
     "migrate": "node src/database/migrate.js",
     "migrate:undo": "node src/database/migrate.js --undo",
     "migrate:fresh": "node src/database/migrate.js --fresh",
@@ -35,7 +35,6 @@
     "puppeteer": "^24.35.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "puppeteer-firefox": "^0.5.1",
     "qrcode": "^1.5.4",
     "sequelize": "^6.37.5",
     "speakeasy": "^2.0.0"

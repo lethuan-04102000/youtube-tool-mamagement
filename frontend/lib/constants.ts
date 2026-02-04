@@ -3,6 +3,8 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost
 export const API_ENDPOINTS = {
   ACCOUNTS: {
     LIST: '/api/v1/accounts',
+    EXPORT: '/api/v1/accounts/export',
+    OPEN_BROWSER: (id: number) => `/api/v1/accounts/${id}/open-browser`,
   },
   WATCH: {
     BATCH: '/api/v1/watch/video',
@@ -10,6 +12,7 @@ export const API_ENDPOINTS = {
   },
   UPLOAD: {
     DOWNLOAD_AND_UPLOAD: '/api/v1/upload/download-and-upload',
+    BATCH_UPLOAD: '/api/v1/upload/batch-upload',
     YOUTUBE: '/api/v1/upload/youtube',
     DOWNLOAD: '/api/v1/upload/download',
     DOWNLOADS: '/api/v1/upload/downloads',

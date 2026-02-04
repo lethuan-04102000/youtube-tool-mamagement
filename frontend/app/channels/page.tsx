@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Search, ChevronLeft, ChevronRight, ExternalLink, Upload, X, FileText, RotateCw } from 'lucide-react';
+import { RefreshCw, Search, ChevronLeft, ChevronRight, ExternalLink, Upload, X, FileText, RotateCw, Download, Chrome } from 'lucide-react';
 import { buildApiUrl, API_ENDPOINTS } from '@/lib/constants';
 import { accountsAPI } from '@/lib/api';
 
@@ -36,6 +36,9 @@ export default function ListChannelsPage() {
   
   // Retry state
   const [retryingId, setRetryingId] = useState<number | null>(null);
+  
+  // Open browser state
+  const [openingBrowserId, setOpeningBrowserId] = useState<number | null>(null);
   
   // Pagination & Search
   const [pagination, setPagination] = useState<Pagination>({
@@ -176,6 +179,109 @@ export default function ListChannelsPage() {
     }
   };
 
+  const handleExport = async () => {
+    try {
+      const url = buildApiUrl(API_ENDPOINTS.ACCOUNTS.EXPORT);
+      
+      // Fetch the CSV file
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error('Failed to export accounts');
+      }
+      
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = 'accounts.csv';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create blob and download
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      
+    } catch (error: any) {
+      console.error('Export failed:', error);
+      alert(`❌ Export failed: ${error.message}`);
+    }
+  };
+
+  const handleOpenBrowser = async (id: number, email: string) => {
+    if (openingBrowserId) return; // Prevent multiple opens
+    
+    setOpeningBrowserId(id);
+    
+    try {
+      const url = buildApiUrl(API_ENDPOINTS.ACCOUNTS.OPEN_BROWSER(id));
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`✅ ${result.message}\n\n${result.data.note}`);
+      } else {
+        // Handle specific error cases
+        if (response.status === 409) {
+          // Browser already open
+          const shouldClose = confirm(`⚠️  ${result.message}\n\nDo you want to close it now?`);
+          if (shouldClose) {
+            await handleCloseBrowser(id, email);
+          }
+        } else {
+          throw new Error(result.message || 'Failed to open browser');
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('Open browser failed:', error);
+      alert(`❌ Open browser failed: ${error.message}`);
+    } finally {
+      setOpeningBrowserId(null);
+    }
+  };
+
+  const handleCloseBrowser = async (id: number, email: string) => {
+    try {
+      const url = buildApiUrl(`/api/v1/accounts/${id}/close-browser`);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`✅ ${result.message}`);
+      } else {
+        throw new Error(result.message || 'Failed to close browser');
+      }
+      
+    } catch (error: any) {
+      console.error('Close browser failed:', error);
+      alert(`❌ Close browser failed: ${error.message}`);
+    }
+  };
+
   return (
     <div className="p-6">
       {/* Compact Header */}
@@ -185,6 +291,14 @@ export default function ListChannelsPage() {
           <p className="text-sm text-gray-500 mt-1">Danh sách tất cả kênh YouTube</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            title="Export all accounts to CSV"
+          >
+            <Download size={16} />
+            Export CSV
+          </button>
           <button
             onClick={() => setShowImportModal(true)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -319,20 +433,21 @@ export default function ListChannelsPage() {
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Link</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">2FA</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Channel</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Browser</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                     <RefreshCw className="animate-spin mx-auto mb-2" size={20} />
                     <div className="text-sm">Đang tải kênh...</div>
                   </td>
                 </tr>
               ) : channels.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
                     {search 
                       ? 'Không tìm thấy kênh nào phù hợp.' 
                       : filterStatus !== 'all'
@@ -381,6 +496,17 @@ export default function ListChannelsPage() {
                           ✗
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <button
+                        onClick={() => handleOpenBrowser(channel.id, channel.email)}
+                        disabled={openingBrowserId === channel.id}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Open browser with profile/cookie"
+                      >
+                        <Chrome size={12} className={openingBrowserId === channel.id ? 'animate-pulse' : ''} />
+                        {openingBrowserId === channel.id ? 'Opening...' : 'Open'}
+                      </button>
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       {(!channel.isAuthenticator || !channel.isCreateChannel) ? (

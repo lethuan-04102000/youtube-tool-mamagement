@@ -100,6 +100,43 @@ export interface UploadVideoResponse {
   error?: string;
 }
 
+export interface BatchUploadVideoItem {
+  sourceUrl: string;
+  title?: string;
+  description?: string;
+  visibility?: 'public' | 'unlisted' | 'private';
+  tags?: string[];
+  scheduleDate?: string;
+}
+
+export interface BatchUploadRequest {
+  id?: number;
+  email?: string;
+  videos: BatchUploadVideoItem[];
+}
+
+export interface BatchUploadResult {
+  index: number;
+  sourceUrl: string;
+  success: boolean;
+  message: string;
+  videoUrl?: string;
+  error?: string;
+}
+
+export interface BatchUploadResponse {
+  success: boolean;
+  message: string;
+  data?: {
+    results: BatchUploadResult[];
+    summary: {
+      total: number;
+      success: number;
+      failed: number;
+    };
+  };
+}
+
 export interface UploadedVideo {
   id: number;
   account_youtube_id: number;
@@ -264,6 +301,14 @@ export const uploadAPI = {
     
     const endpoint = `${API_ENDPOINTS.UPLOAD.VIDEOS}?${searchParams.toString()}`;
     return request<UploadedVideosResponse>(endpoint);
+  },
+
+  // Batch upload videos (max 4 videos at once)
+  batchUpload: (data: BatchUploadRequest): Promise<BatchUploadResponse> => {
+    return request<BatchUploadResponse>(API_ENDPOINTS.UPLOAD.BATCH_UPLOAD, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   },
 };
 

@@ -220,6 +220,155 @@ class UploadController {
   }
 
   /**
+   * POST /api/v1/upload/batch-upload
+   * Upload nhiều video cùng lúc (tối đa 4 videos)
+   * Body: {
+   *   id: number,
+   *   videos: [{sourceUrl, title?, description?, visibility?, tags?, scheduleDate?}]
+   * }
+   */
+  async batchUpload(req, res) {
+    try {
+      const { id, email, videos } = req.body;
+
+      if (!id && !email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cần truyền id hoặc email của account'
+        });
+      }
+
+      if (!videos || !Array.isArray(videos) || videos.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cần truyền mảng videos (tối thiểu 1 video)'
+        });
+      }
+
+      if (videos.length > 4) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tối đa 4 videos mỗi lần upload'
+        });
+      }
+
+      // Validate each video has sourceUrl
+      for (let i = 0; i < videos.length; i++) {
+        if (!videos[i].sourceUrl) {
+          return res.status(400).json({
+            success: false,
+            message: `Video ${i + 1}: sourceUrl là bắt buộc`
+          });
+        }
+      }
+
+      // Tìm account
+      const where = id ? { id } : { email };
+      const account = await AccountYoutube.findOne({ where });
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy account trong database'
+        });
+      }
+
+      console.log(`\n📤 Batch upload ${videos.length} videos cho account: ${account.email}`);
+
+      const results = [];
+      const errors = [];
+
+      // Upload từng video tuần tự (để tránh quá tải)
+      for (let i = 0; i < videos.length; i++) {
+        const video = videos[i];
+        const videoNum = i + 1;
+
+        console.log(`\n[${videoNum}/${videos.length}] Uploading: ${video.sourceUrl}`);
+
+        try {
+          const result = await youtubeUploadService.downloadAndUpload(
+            account.email,
+            video.sourceUrl,
+            {
+              title: video.title,
+              description: video.description,
+              visibility: video.visibility || 'public',
+              tags: video.tags,
+              scheduleDate: video.scheduleDate
+            }
+          );
+
+          results.push({
+            index: videoNum,
+            sourceUrl: video.sourceUrl,
+            success: result.success,
+            message: result.message,
+            videoUrl: result.data?.videoUrl,
+            error: result.error
+          });
+
+          if (result.success) {
+            console.log(`✅ [${videoNum}/${videos.length}] Upload thành công`);
+          } else {
+            console.log(`❌ [${videoNum}/${videos.length}] Upload thất bại: ${result.message}`);
+            errors.push({
+              index: videoNum,
+              sourceUrl: video.sourceUrl,
+              error: result.message
+            });
+          }
+
+          // Delay giữa các video để tránh spam
+          if (i < videos.length - 1) {
+            console.log(`⏳ Waiting 3s before next video...`);
+            await new Promise(r => setTimeout(r, 3000));
+          }
+
+        } catch (error) {
+          console.error(`❌ [${videoNum}/${videos.length}] Error:`, error.message);
+          results.push({
+            index: videoNum,
+            sourceUrl: video.sourceUrl,
+            success: false,
+            message: 'Upload failed',
+            error: error.message
+          });
+          errors.push({
+            index: videoNum,
+            sourceUrl: video.sourceUrl,
+            error: error.message
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
+
+      console.log(`\n📊 Batch upload completed: ${successCount}/${videos.length} success`);
+
+      return res.json({
+        success: successCount > 0,
+        message: `Uploaded ${successCount}/${videos.length} videos successfully`,
+        data: {
+          total: videos.length,
+          success: successCount,
+          failed: failCount,
+          results
+        },
+        errors: errors.length > 0 ? errors : undefined
+      });
+
+    } catch (error) {
+      console.error('❌ Batch upload controller error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
+
+  /**
    * GET /api/v1/upload/downloads
    * Lấy danh sách file đã download
    */

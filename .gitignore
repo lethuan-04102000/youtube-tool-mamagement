@@ -9,3 +9,5 @@ accounts-updated.csv
 .agent/
 downloads/
 /avatars
+browser-profiles/
+fb-cookies.json

@@ -52,13 +52,20 @@ class YoutubeUploadService {
       console.log('⏳ Đang chuẩn bị browser...');
       await new Promise(r => setTimeout(r, 3000));
 
-      // Khởi tạo browser với retry
-      browser = await browserService.launchBrowser(false);
+      // Khởi tạo browser với profile để tái sử dụng session
+      browser = await browserService.launchBrowser(false, email);
       await new Promise(r => setTimeout(r, 1000));
       page = await browserService.createPage(browser);
 
-      // Đăng nhập Google
-      await googleAuthService.login(page, email, account.password);
+      // Kiểm tra xem đã đăng nhập chưa (nếu dùng profile)
+      const isLoggedIn = await googleAuthService.isLoggedIn(page);
+
+      if (!isLoggedIn) {
+        // Chưa login → Đăng nhập Google
+        await googleAuthService.login(page, email, account.password);
+      } else {
+        console.log('🎯 Sử dụng session đã lưu (bỏ qua login)');
+      }
 
       // Truy cập YouTube Studio
       console.log('🎬 Đang truy cập YouTube Studio...');

@@ -7,6 +7,7 @@ const csvService = require('../services/csv.service');
 const facebDownloader = require('../services/faceb.downloader.service');
 const fs = require('fs');
 const path = require('path');
+const sessionService = require('../services/session.service');
 
 class VerifyAuthenticatorController {
   
@@ -39,6 +40,18 @@ class VerifyAuthenticatorController {
           const account = accounts[i];
           
           try {
+            // Normalize is_create_channel flag from CSV (accept '1','true','yes', boolean)
+            let isCreateChannelFlag = false;
+            if (account.hasOwnProperty('is_create_channel')) {
+              const v = account.is_create_channel;
+              if (typeof v === 'string') {
+                const s = v.trim().toLowerCase();
+                isCreateChannelFlag = s === '1' || s === 'true' || s === 'yes';
+              } else {
+                isCreateChannelFlag = !!v;
+              }
+            }
+
             const [accountRecord, created] = await AccountYoutube.findOrCreate({
               where: { email: account.email },
               defaults: {
@@ -48,7 +61,9 @@ class VerifyAuthenticatorController {
                 avatar_url: account.avatar_url || null,
                 recovery_email: account.recovery_email || null,
                 code_authenticators: null,
-                is_authenticator: false
+                is_authenticator: false,
+                // If CSV indicates channel already created, set it so we won't create later
+                is_create_channel: isCreateChannelFlag
               }
             });
             
@@ -64,6 +79,19 @@ class VerifyAuthenticatorController {
                   { where: { email: account.email } }
                 );
                 console.log(`     📥 Updated avatar_url for ${account.email}`);
+              }
+
+              // If CSV explicitly marks is_create_channel=true, update DB so we skip channel creation later
+              if (account.hasOwnProperty('is_create_channel') && isCreateChannelFlag && !accountRecord.is_create_channel) {
+                try {
+                  await AccountYoutube.update(
+                    { is_create_channel: true },
+                    { where: { email: account.email } }
+                  );
+                  console.log(`     ✅ Marked is_create_channel=true for ${account.email} (from CSV)`);
+                } catch (err) {
+                  console.error(`     ❌ Failed to update is_create_channel for ${account.email}:`, err.message);
+                }
               }
             }
           } catch (error) {
@@ -413,9 +441,10 @@ async function setupSingleAccountWithBrowser(account) {
     
     // Use HEADLESS_AUTHENTICATOR for authenticator setup
     const headless = process.env.HEADLESS_AUTHENTICATOR === 'true';
-    browser = await browserService.launchBrowser(headless);
+    // Launch browser with profile for this email so session can be persisted
+    browser = await browserService.launchBrowser(headless, account.email);
     
-    const result = await setupSingleAccount(browser, account);
+    const result = await setupSingleAccount(browser, account, { profileEmail: account.email });
     
     await browser.close();
     console.log(`✅ [${account.email}] Browser closed`);
@@ -442,11 +471,17 @@ async function setupSingleAccountWithBrowser(account) {
   }
 }
 
-async function setupSingleAccount(browser, account) {
+async function setupSingleAccount(browser, account, options = {}) {
   const page = await browserService.createPage(browser);
   
   try {
-    await browserService.clearSession(page);
+    // If not using profile, clear session to start fresh. If profile is used, preserve session.
+    const usingProfile = !!options.profileEmail;
+    if (!usingProfile) {
+      await browserService.clearSession(page);
+    } else {
+      console.log(`📂 Using profile for ${options.profileEmail}, preserving existing session`);
+    }
 
     // Check if account already has authenticator
     const existingAccount = await AccountYoutube.findOne({
@@ -465,14 +500,24 @@ async function setupSingleAccount(browser, account) {
       
       // Just login - no need to navigate to 2FA settings
       console.log('🔐 Đang login...');
-      await googleAuthService.login(page, account.email, account.password);
+      // If using profile, session may already be active; only login if not logged in
+      if (!usingProfile || !(await googleAuthService.isLoggedIn(page))) {
+        await googleAuthService.login(page, account.email, account.password);
+      } else {
+        console.log('🎯 Session active via profile, skipping login');
+      }
       console.log('✅ Login thành công, sẵn sàng tạo channel');
       
     } else {
       // Setup 2FA flow
       console.log('🔐 Đang setup 2FA...');
       
-      await googleAuthService.login(page, account.email, account.password);
+      // If using profile and already logged in, skip login step
+      if (!usingProfile || !(await googleAuthService.isLoggedIn(page))) {
+        await googleAuthService.login(page, account.email, account.password);
+      } else {
+        console.log('🎯 Session active via profile, skipping login before 2FA setup');
+      }
       await googleAuthService.navigateTo2FASettings(page);
 
       const clickedAuth = await authenticatorService.clickAuthenticatorLink(page);
@@ -685,7 +730,13 @@ async function setupSingleAccount(browser, account) {
 
     console.log('🎉 Setup hoàn tất!');
 
-    await googleAuthService.logout(page);
+    // If we used a profile for this account, don't logout so the session is persisted for future runs
+    if (!usingProfile) {
+      await googleAuthService.logout(page);
+    } else {
+      console.log(`📂 Keeping profile for ${options.profileEmail} (not logging out)`);
+    }
+    
     await page.close();
 
     return {
@@ -717,7 +768,7 @@ async function setupSingleAccount(browser, account) {
       console.error('❌ Lỗi update database:', dbError.message);
     }
     
-    await page.close();
+    try { await page.close(); } catch(e) {}
     return { 
       email: account.email,
       password: account.password,

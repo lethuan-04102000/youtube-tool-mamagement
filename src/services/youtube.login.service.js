@@ -1,5 +1,6 @@
 const browserService = require('./browser.service');
 const googleAuthService = require('./google.auth.service');
+const sessionService = require('./session.service');
 const { AccountYoutube } = require('../models');
 
 class YoutubeLoginService {
@@ -12,13 +13,15 @@ class YoutubeLoginService {
    * @param {boolean} options.headless - Chạy headless mode (default: từ env)
    * @param {boolean} options.keepBrowserOpen - Giữ browser mở sau khi login (default: false)
    * @param {string} options.navigateTo - URL để navigate sau khi login (default: youtube.com)
+   * @param {boolean} options.useProfile - Use browser profile to save session (default: true)
    * @returns {Promise<object>} - Kết quả đăng nhập
    */
   async login(email, password = null, options = {}) {
     const {
       headless = null,
       keepBrowserOpen = false,
-      navigateTo = 'https://www.youtube.com'
+      navigateTo = 'https://www.youtube.com',
+      useProfile = true
     } = options;
 
     let browser = null;
@@ -28,6 +31,9 @@ class YoutubeLoginService {
       console.log(`\n${'='.repeat(50)}`);
       console.log(`🎬 BẮT ĐẦU ĐĂNG NHẬP YOUTUBE`);
       console.log(`📧 Email: ${email}`);
+      if (useProfile && sessionService.hasProfile(email)) {
+        console.log(`📂 Profile found - will reuse session`);
+      }
       console.log(`${'='.repeat(50)}\n`);
 
       // Lấy thông tin account từ DB nếu không truyền password
@@ -40,8 +46,8 @@ class YoutubeLoginService {
         password = account.password;
       }
 
-      // Khởi tạo browser
-      browser = await browserService.launchBrowser(headless);
+      // Khởi tạo browser with profile if enabled
+      browser = await browserService.launchBrowser(headless, useProfile ? email : null, 3);
       page = await browserService.createPage(browser);
 
       // Đăng nhập Google
@@ -74,6 +80,9 @@ class YoutubeLoginService {
 
       console.log(`\n${'='.repeat(50)}`);
       console.log(`✅ ĐĂNG NHẬP YOUTUBE THÀNH CÔNG!`);
+      if (useProfile) {
+        console.log(`💾 Session đã được lưu vào profile - lần sau không cần login`);
+      }
       console.log(`${'='.repeat(50)}\n`);
 
       const result = {
