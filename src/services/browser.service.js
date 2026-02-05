@@ -40,14 +40,44 @@ class BrowserService {
             '--no-default-browser-check',
             '--disable-popup-blocking',
             '--disable-infobars',
-            '--disable-features=ChromeWhatsNewUI'
+            '--disable-features=ChromeWhatsNewUI',
+            // ===== THÊM CÁC FLAG MỚI ĐỂ GIỐNG NGƯỜI DÙNG THẬT HƠN =====
+            '--disable-web-security', // Tắt security để tránh CORS issues
+            '--disable-features=IsolateOrigins,site-per-process', // Tắt site isolation
+            '--allow-running-insecure-content',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-background-timer-throttling',
+            '--disable-ipc-flooding-protection',
+            '--disable-hang-monitor',
+            '--disable-prompt-on-repost',
+            '--disable-domain-reliability',
+            '--disable-component-extensions-with-background-pages',
+            // Language và timezone
+            '--lang=en-US,en',
+            // WebGL và Canvas fingerprinting
+            '--use-gl=swiftshader',
+            '--enable-webgl',
+            '--enable-unsafe-swiftshader',
+            // Audio
+            '--autoplay-policy=no-user-gesture-required',
+            // Permissions
+            '--deny-permission-prompts'
           ],
-          ignoreDefaultArgs: ['--enable-automation'],
+          ignoreDefaultArgs: [
+            '--enable-automation',
+            '--enable-blink-features=IdleDetection' // Tắt idle detection
+          ],
           defaultViewport: {
             width: 1400,
             height: 1200
           },
-          timeout: 60000
+          timeout: 60000,
+          // ===== THÊM EXECUTABLE PATH ĐỂ SỬ DỤNG CHROME THẬT =====
+          // Nếu có Chrome/Chromium đã cài trên máy, sử dụng nó thay vì Chromium của Puppeteer
+          // executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', // macOS
+          // executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Windows
+          // executablePath: '/usr/bin/google-chrome', // Linux
         };
 
         // Add userDataDir if email provided
@@ -76,28 +106,195 @@ class BrowserService {
   async createPage(browser) {
     const page = await browser.newPage();
 
+    // Set realistic user agent (latest Chrome on macOS)
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    // Anti-detection
+    // Set viewport to match common screen resolutions
+    await page.setViewport({
+      width: 1400,
+      height: 1200,
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      isLandscape: true,
+      isMobile: false
+    });
+
+    // Set extra HTTP headers to look more human
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'max-age=0',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
+    });
+
+    // Advanced anti-detection - MUST run before page navigation
     await page.evaluateOnNewDocument(() => {
+      // Remove webdriver property
       Object.defineProperty(navigator, 'webdriver', {
         get: () => false
       });
       
+      // Mock plugins to look like a real browser
       Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5]
+        get: () => [
+          {
+            0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: Plugin},
+            description: "Portable Document Format",
+            filename: "internal-pdf-viewer",
+            length: 1,
+            name: "Chrome PDF Plugin"
+          },
+          {
+            0: {type: "application/pdf", suffixes: "pdf", description: "", enabledPlugin: Plugin},
+            description: "",
+            filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+            length: 1,
+            name: "Chrome PDF Viewer"
+          },
+          {
+            0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable", enabledPlugin: Plugin},
+            1: {type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable", enabledPlugin: Plugin},
+            description: "",
+            filename: "internal-nacl-plugin",
+            length: 2,
+            name: "Native Client"
+          }
+        ]
       });
       
+      // Set languages
       Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en']
       });
       
       // Override chrome property
       window.chrome = {
-        runtime: {}
+        runtime: {},
+        loadTimes: function() {},
+        csi: function() {},
+        app: {}
       };
+      
+      // Mock permissions
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications' ?
+          Promise.resolve({ state: Notification.permission }) :
+          originalQuery(parameters)
+      );
+
+      // Add missing properties to make it look more real
+      Object.defineProperty(navigator, 'maxTouchPoints', {
+        get: () => 0
+      });
+
+      Object.defineProperty(navigator, 'platform', {
+        get: () => 'MacIntel'
+      });
+
+      Object.defineProperty(navigator, 'vendor', {
+        get: () => 'Google Inc.'
+      });
+
+      // Override getUserMedia to prevent detection
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = function(constraints) {
+          return getUserMedia(constraints);
+        };
+      }
+
+      // Mock battery API
+      if (!navigator.getBattery) {
+        navigator.getBattery = () => Promise.resolve({
+          charging: true,
+          chargingTime: 0,
+          dischargingTime: Infinity,
+          level: 1,
+          addEventListener: () => {},
+          removeEventListener: () => {}
+        });
+      }
+
+      // Override permissions
+      const originalPermissions = navigator.permissions;
+      Object.defineProperty(navigator, 'permissions', {
+        get: () => ({
+          query: (parameters) => {
+            if (parameters.name === 'notifications') {
+              return Promise.resolve({ state: 'default' });
+            }
+            return originalPermissions.query(parameters);
+          }
+        })
+      });
+
+      // Remove automation-related properties
+      delete navigator.__proto__.webdriver;
+      
+      // Mock connection API
+      Object.defineProperty(navigator, 'connection', {
+        get: () => ({
+          effectiveType: '4g',
+          downlink: 10,
+          rtt: 50,
+          saveData: false
+        })
+      });
+
+      // Mock deviceMemory
+      Object.defineProperty(navigator, 'deviceMemory', {
+        get: () => 8
+      });
+
+      // Mock hardwareConcurrency
+      Object.defineProperty(navigator, 'hardwareConcurrency', {
+        get: () => 8
+      });
+    });
+
+    // Add random mouse movements to mimic human behavior
+    page.on('load', async () => {
+      try {
+        await page.evaluate(() => {
+          // Add random delays to make actions look more human
+          const addRandomDelay = () => Math.floor(Math.random() * 100) + 50;
+          
+          // Simulate mouse movements occasionally
+          let moveCount = 0;
+          const maxMoves = Math.floor(Math.random() * 5) + 3;
+          
+          const moveMouseRandomly = () => {
+            if (moveCount < maxMoves) {
+              const x = Math.floor(Math.random() * window.innerWidth);
+              const y = Math.floor(Math.random() * window.innerHeight);
+              
+              const event = new MouseEvent('mousemove', {
+                clientX: x,
+                clientY: y,
+                bubbles: true
+              });
+              
+              document.dispatchEvent(event);
+              moveCount++;
+              
+              setTimeout(moveMouseRandomly, addRandomDelay() * 10);
+            }
+          };
+          
+          // Start random mouse movements after a delay
+          setTimeout(moveMouseRandomly, addRandomDelay());
+        });
+      } catch (err) {
+        // Ignore errors in random mouse movements
+      }
     });
 
     return page;

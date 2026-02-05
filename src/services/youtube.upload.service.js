@@ -57,23 +57,39 @@ class YoutubeUploadService {
       await new Promise(r => setTimeout(r, 1000));
       page = await browserService.createPage(browser);
 
-      // Kiểm tra xem đã đăng nhập chưa (nếu dùng profile)
-      const isLoggedIn = await googleAuthService.isLoggedIn(page);
-
-      if (!isLoggedIn) {
-        // Chưa login → Đăng nhập Google
-        await googleAuthService.login(page, email, account.password);
-      } else {
-        console.log('🎯 Sử dụng session đã lưu (bỏ qua login)');
-      }
-
-      // Truy cập YouTube Studio
+      // Truy cập YouTube Studio trực tiếp để check session
       console.log('🎬 Đang truy cập YouTube Studio...');
       await page.goto('https://studio.youtube.com', {
         waitUntil: 'networkidle2',
         timeout: 60000
       });
       await new Promise(r => setTimeout(r, 3000));
+
+      // Check xem có bị redirect về login page không
+      const currentUrl = page.url();
+      const needsLogin = currentUrl.includes('accounts.google.com') || 
+                        currentUrl.includes('signin') ||
+                        currentUrl.includes('ServiceLogin');
+
+      if (needsLogin) {
+        console.log('🔐 Session expired hoặc chưa login, đang đăng nhập...');
+        // Đăng nhập Google
+        await googleAuthService.login(page, email, account.password);
+        
+        // Sau khi login xong, quay lại YouTube Studio
+        console.log('🎬 Quay lại YouTube Studio...');
+        await page.goto('https://studio.youtube.com', {
+          waitUntil: 'networkidle2',
+          timeout: 60000
+        });
+        await new Promise(r => setTimeout(r, 3000));
+      } else {
+        console.log('✅ Đã đăng nhập (session còn hiệu lực), bỏ qua login');
+      }
+
+      // Check and dismiss any permission popups
+      console.log('🔍 Kiểm tra và đóng popup Permissions (nếu có)...');
+      await this.dismissPermissionsPopup(page);
 
       // Click nút Create (Upload)
       console.log('📤 Đang mở dialog upload...');
@@ -93,13 +109,28 @@ class YoutubeUploadService {
 
       // Chọn visibility và schedule (nếu có)
       console.log(`🔒 Đang thiết lập visibility: ${visibility}...`);
-      await this.setVisibility(page, visibility, scheduleDate);
+      const visibilityResult = await this.setVisibility(page, visibility, scheduleDate);
+      
+      if (!visibilityResult.success) {
+        // Take screenshot on error
+        const screenshotPath = path.join(__dirname, '../../uploads', `error-visibility-${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.error(`📸 Screenshot saved: ${screenshotPath}`);
+        throw new Error(`Failed to set visibility: ${visibilityResult.error}`);
+      }
 
       // Publish hoặc Schedule video
       let videoUrl;
       if (scheduleDate) {
         console.log(`📅 Đang schedule video cho: ${scheduleDate}...`);
         videoUrl = await this.scheduleVideo(page);
+        if (!videoUrl) {
+          // Take screenshot on error
+          const screenshotPath = path.join(__dirname, '../../uploads', `error-schedule-${Date.now()}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+          console.error(`📸 Screenshot saved: ${screenshotPath}`);
+          throw new Error('Failed to schedule video: no video URL returned');
+        }
         console.log(`\n${'='.repeat(50)}`);
         console.log(`✅ SCHEDULE VIDEO THÀNH CÔNG!`);
         console.log(`📅 Scheduled: ${scheduleDate}`);
@@ -108,6 +139,13 @@ class YoutubeUploadService {
       } else {
         console.log('🚀 Đang publish video...');
         videoUrl = await this.publishVideo(page);
+        if (!videoUrl) {
+          // Take screenshot on error
+          const screenshotPath = path.join(__dirname, '../../uploads', `error-publish-${Date.now()}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+          console.error(`📸 Screenshot saved: ${screenshotPath}`);
+          throw new Error('Failed to publish video: no video URL returned');
+        }
         console.log(`\n${'='.repeat(50)}`);
         console.log(`✅ UPLOAD VIDEO THÀNH CÔNG!`);
         console.log(`🔗 URL: ${videoUrl}`);
@@ -139,6 +177,77 @@ class YoutubeUploadService {
         message: error.message,
         error: error.message
       };
+    }
+  }
+
+  /**
+   * Dismiss permissions popup if it appears
+   */
+  async dismissPermissionsPopup(page) {
+    try {
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Try to find and close the permissions dialog
+      const closed = await page.evaluate(() => {
+        // Look for the Settings dialog with Permissions tab
+        const settingsDialog = document.querySelector('ytcp-dialog') || 
+                              document.querySelector('tp-yt-paper-dialog[aria-labelledby="dialog-title"]');
+        
+        if (settingsDialog) {
+          // Check if it's the Permissions dialog
+          const dialogTitle = settingsDialog.querySelector('#dialog-title');
+          const permissionsText = settingsDialog.textContent || '';
+          
+          if (permissionsText.includes('Permissions') || 
+              permissionsText.includes('Settings') ||
+              permissionsText.includes('Invite')) {
+            
+            console.log('Found Permissions/Settings dialog, closing...');
+            
+            // Try to find close button
+            const closeButtons = settingsDialog.querySelectorAll('button, ytcp-button');
+            for (const btn of closeButtons) {
+              const ariaLabel = btn.getAttribute('aria-label') || '';
+              const text = btn.textContent || '';
+              
+              // Look for close/cancel/dismiss buttons
+              if (ariaLabel.toLowerCase().includes('close') ||
+                  ariaLabel.toLowerCase().includes('cancel') ||
+                  ariaLabel.toLowerCase().includes('dismiss') ||
+                  text.toLowerCase().includes('close') ||
+                  text.toLowerCase().includes('cancel')) {
+                btn.click();
+                console.log('Clicked close button on Permissions dialog');
+                return true;
+              }
+            }
+            
+            // If no close button found, try pressing ESC
+            const escEvent = new KeyboardEvent('keydown', {
+              key: 'Escape',
+              code: 'Escape',
+              keyCode: 27,
+              which: 27,
+              bubbles: true
+            });
+            document.dispatchEvent(escEvent);
+            console.log('Pressed ESC to close dialog');
+            return true;
+          }
+        }
+        
+        return false;
+      });
+
+      if (closed) {
+        console.log('✅ Đã đóng popup Permissions');
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        console.log('ℹ️  Không có popup Permissions');
+      }
+    } catch (error) {
+      console.log('⚠️  Lỗi khi đóng popup Permissions:', error.message);
+      // Continue anyway, không throw error
     }
   }
 
@@ -634,17 +743,19 @@ class YoutubeUploadService {
    * @param {Page} page - Puppeteer page
    * @param {string} visibility - public, unlisted, private
    * @param {string|null} scheduleDate - ISO date string (VD: '2024-01-15T10:00:00')
+   * @returns {Promise<{success: boolean, error?: string}>}
    */
   async setVisibility(page, visibility, scheduleDate = null) {
-    console.log('🔄 Đang chuyển đến trang Visibility...');
+    try {
+      console.log('🔄 Đang chuyển đến trang Visibility...');
 
-    // Click NEXT để qua các bước: Details -> Video elements -> Checks -> Visibility
-    // Cần click 3 lần Next
-    const stepNames = ['Details -> Video elements', 'Video elements -> Checks', 'Checks -> Visibility'];
+      // Click NEXT để qua các bước: Details -> Video elements -> Checks -> Visibility
+      // Cần click 3 lần Next
+      const stepNames = ['Details -> Video elements', 'Video elements -> Checks', 'Checks -> Visibility'];
 
-    for (let i = 0; i < 3; i++) {
-      console.log(`\n   📍 Step ${i + 1}/3: ${stepNames[i]}`);
-      await new Promise(r => setTimeout(r, 2000));
+      for (let i = 0; i < 3; i++) {
+        console.log(`\n   📍 Step ${i + 1}/3: ${stepNames[i]}`);
+        await new Promise(r => setTimeout(r, 2000));
 
       // Nếu đang ở step Checks (i === 1), đợi checks hoàn tất
       if (i === 1) {
@@ -829,18 +940,38 @@ class YoutubeUploadService {
       return false;
     }, visibilityMap[visibility] || 'PUBLIC');
 
-    if (visClicked) {
-      console.log(`✅ Đã chọn visibility: ${visibility}`);
-    } else {
-      console.log(`⚠️ Không tìm thấy option visibility: ${visibility}`);
-    }
+      if (visClicked) {
+        console.log(`✅ Đã chọn visibility: ${visibility}`);
+      } else {
+        console.log(`⚠️ Không tìm thấy option visibility: ${visibility}`);
+        // Take screenshot for debugging
+        const screenshotPath = path.join(__dirname, '../../uploads', `visibility-error-${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath });
+        console.log(`📸 Đã chụp screenshot: ${screenshotPath}`);
+        return { success: false, error: `Không tìm thấy option visibility: ${visibility}` };
+      }
 
-    await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 1000));
 
-    // Nếu có scheduleDate, click vào Schedule section và điền thông tin
-    if (scheduleDate) {
-      console.log(`📅 Đang thiết lập schedule: ${scheduleDate}...`);
-      await this.setScheduleDateTime(page, scheduleDate);
+      // Nếu có scheduleDate, click vào Schedule section và điền thông tin
+      if (scheduleDate) {
+        console.log(`📅 Đang thiết lập schedule: ${scheduleDate}...`);
+        const scheduleSuccess = await this.setScheduleDateTime(page, scheduleDate);
+        
+        if (!scheduleSuccess) {
+          // Take screenshot for debugging
+          const screenshotPath = path.join(__dirname, '../../uploads', `schedule-error-${Date.now()}.png`);
+          await page.screenshot({ path: screenshotPath });
+          console.log(`📸 Đã chụp screenshot: ${screenshotPath}`);
+          return { success: false, error: 'Không thể thiết lập schedule date/time' };
+        }
+      }
+      
+      return { success: true };
+      
+    } catch (error) {
+      console.error(`❌ Lỗi setVisibility: ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 
@@ -848,6 +979,7 @@ class YoutubeUploadService {
    * Thiết lập ngày giờ schedule cho video
    * @param {Page} page - Puppeteer page
    * @param {string} scheduleDate - ISO date string (VD: '2024-01-15T10:00:00')
+   * @returns {Promise<boolean>} - true if schedule was set successfully, false otherwise
    */
   async setScheduleDateTime(page, scheduleDate) {
     // Parse date từ ISO string
@@ -969,17 +1101,28 @@ class YoutubeUploadService {
 
     if (!scheduleExpanded.success) {
       console.log('   ⚠️ Không tìm thấy Schedule section để expand');
-
-      // Thử click bằng Puppeteer với XPath
-      try {
-        const scheduleSection = await page.$x("//div[contains(text(), 'Schedule')]");
-        if (scheduleSection.length > 0) {
-          await scheduleSection[0].click();
-          console.log('   ✅ Clicked Schedule via XPath');
+      
+      // Không dùng XPath nữa, thử click bằng evaluate một lần nữa với selector rộng hơn
+      const retryExpand = await page.evaluate(() => {
+        // Tìm tất cả elements chứa text "Schedule"
+        const allElements = document.querySelectorAll('*');
+        for (const el of allElements) {
+          const text = el.textContent;
+          if (text && text.includes('Schedule') && text.includes('Select a date')) {
+            // Click vào element này hoặc parent của nó
+            el.click();
+            return true;
+          }
         }
-      } catch (e) {
-        console.log('   ⚠️ XPath click failed:', e.message);
+        return false;
+      });
+      
+      if (!retryExpand) {
+        console.log('   ❌ Vẫn không expand được Schedule section');
+        return false;
       }
+      
+      console.log('   ✅ Đã expand Schedule (retry)');
     }
 
     await new Promise(r => setTimeout(r, 3000));
@@ -1045,8 +1188,8 @@ class YoutubeUploadService {
     console.log(`   Date picker result:`, datePickerOpened);
 
     if (!datePickerOpened.success) {
-      console.log('   ⚠️ Không mở được Date Picker');
-      return;
+      console.log('   ❌ Không mở được Date Picker');
+      return false;
     }
 
     await new Promise(r => setTimeout(r, 2000));
@@ -1196,7 +1339,8 @@ class YoutubeUploadService {
     if (dayClicked.success) {
       console.log(`      ✅ Đã chọn ngày: ${day}`);
     } else {
-      console.log(`      ⚠️ Không chọn được ngày: ${day}`);
+      console.log(`      ❌ Không chọn được ngày: ${day}`);
+      return false;
     }
 
     await new Promise(r => setTimeout(r, 2000));
@@ -1240,7 +1384,8 @@ class YoutubeUploadService {
     }
     
     if (!timeInputFound) {
-      console.log(`      ⚠️ Timeout: Không tìm thấy time input sau 10 giây`);
+      console.log(`      ❌ Timeout: Không tìm thấy time input sau 10 giây`);
+      return false;
     } else {
       console.log(`      ✅ Time input đã xuất hiện`);
     }
@@ -1484,14 +1629,17 @@ class YoutubeUploadService {
       console.log(`      ⏱️  Đợi 2 giây để YouTube validate...`);
       await new Promise(r => setTimeout(r, 2000));
       
+      console.log('   ✅ Hoàn tất thiết lập Schedule datetime');
+      return true;
+      
     } else {
       console.log(`      ⚠️ Không click được time input: ${timeInputClicked.error}`);
       if (timeInputClicked.inputCount !== undefined) {
         console.log(`      ℹ️  Found ${timeInputClicked.inputCount} inputs in schedule section`);
       }
+      console.log('   ❌ Thất bại thiết lập Schedule datetime');
+      return false;
     }
-
-    console.log('   ✅ Hoàn tất thiết lập Schedule datetime');
   }
 
   /**
