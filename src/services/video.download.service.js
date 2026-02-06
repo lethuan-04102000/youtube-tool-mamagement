@@ -35,18 +35,23 @@ class VideoDownloadService {
     // Nếu không phải Google Drive, tải từ Facebook
     let browser = null;
     let page = null;
+    let result = null; // Track if browser is new or reused
 
     try {
       console.log(`\n📥 Tải video từ Facebook`);
       console.log(`   URL: ${videoUrl}`);
       console.log(`   Quality: ${quality}`);
       if (this.email) {
-        console.log(`   Account: ${this.email}`);
+        console.log(`   Account: ${this.email} (using clean browser for download)`);
       }
 
-      // Launch browser with profile if email provided
-      browser = await browserService.launchBrowser(false, this.email);
-      page = await browserService.createPage(browser);
+      // Launch CLEAN browser (no profile) for download
+      // Always fresh browser - download doesn't need session/cookies
+      result = await browserService.launchBrowser(false, null, 3, false);
+      browser = result.browser;
+      page = result.page;
+      
+      console.log('   🆕 Launched clean browser for download (no profile)');
 
       // Cấu hình download behavior
       const client = await page.target().createCDPSession();
@@ -91,7 +96,9 @@ class VideoDownloadService {
 
       console.log(`✅ Tải thành công: ${downloadedFile.fileName} (${downloadedFile.sizeMB} MB)`);
 
+      // Always close clean browser after download
       await browser.close();
+      console.log('   � Closed browser');
 
       return {
         success: true,
@@ -107,7 +114,16 @@ class VideoDownloadService {
 
     } catch (error) {
       console.error(`❌ Lỗi: ${error.message}`);
-      if (browser) await browser.close();
+      
+      // Always close browser on error (clean browser)
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (e) {
+          // Ignore close errors
+        }
+      }
+      
       return { success: false, message: error.message };
     }
   }

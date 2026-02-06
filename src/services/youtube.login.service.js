@@ -47,8 +47,15 @@ class YoutubeLoginService {
       }
 
       // Khởi tạo browser with profile if enabled
-      browser = await browserService.launchBrowser(headless, useProfile ? email : null, 3);
-      page = await browserService.createPage(browser);
+      const browserResult = await browserService.launchBrowser(headless, useProfile ? email : null, 3, true);
+      browser = browserResult.browser;
+      page = browserResult.page;
+      
+      if (browserResult.isNewBrowser) {
+        console.log('🆕 Launched new browser');
+      } else {
+        console.log('🔄 Reused existing browser, opened new tab');
+      }
 
       // Đăng nhập Google
       await googleAuthService.login(page, email, password);

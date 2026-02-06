@@ -73,7 +73,10 @@ async function undoLastMigration() {
       process.exit(1);
     }
     
-    await migration.down(sequelize.getQueryInterface());
+    // Pass both queryInterface and Sequelize (with DataTypes)
+    const { DataTypes } = require('sequelize');
+    const SequelizeWithDataTypes = { ...DataTypes, QueryTypes: require('sequelize').QueryTypes };
+    await migration.down(sequelize.getQueryInterface(), SequelizeWithDataTypes);
     await removeMigrationRecord(lastMigration);
     console.log(`✅ Successfully rolled back: ${lastMigration}\n`);
     
@@ -128,7 +131,10 @@ async function migrate() {
           const migration = require(migrationPath);
           
           if (migration.down) {
-            await migration.down(sequelize.getQueryInterface());
+            // Pass both queryInterface and Sequelize (with DataTypes)
+            const { DataTypes } = require('sequelize');
+            const SequelizeWithDataTypes = { ...DataTypes, QueryTypes: require('sequelize').QueryTypes };
+            await migration.down(sequelize.getQueryInterface(), SequelizeWithDataTypes);
             await removeMigrationRecord(migrationName);
             console.log(`✅ Rolled back: ${migrationName}\n`);
           }
@@ -159,7 +165,10 @@ async function migrate() {
       
       const migration = require(migrationPath);
       
-      await migration.up(sequelize.getQueryInterface());
+      // Pass both queryInterface and Sequelize (with DataTypes)
+      const { DataTypes } = require('sequelize');
+      const SequelizeWithDataTypes = { ...DataTypes, QueryTypes: require('sequelize').QueryTypes };
+      await migration.up(sequelize.getQueryInterface(), SequelizeWithDataTypes);
       await recordMigration(file);
       console.log(`✅ Completed: ${file}\n`);
     }

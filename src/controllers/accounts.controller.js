@@ -276,6 +276,7 @@ const openBrowsers = new Map();
 exports.openBrowserWithProfile = async (req, res) => {
   try {
     const { id } = req.params;
+    const { reuseIfOpen = 'true' } = req.query; // Allow override via query param
     
     if (!id) {
       return res.status(400).json({
@@ -293,108 +294,88 @@ exports.openBrowserWithProfile = async (req, res) => {
       });
     }
 
-    // Check if browser already open for this email
-    if (openBrowsers.has(account.email)) {
-      return res.status(409).json({
-        success: false,
-        message: `Browser already open for ${account.email}. Please close it first.`,
-        data: {
-          email: account.email,
-          note: 'Close the existing browser window before opening a new one.'
-        }
-      });
-    }
+    const email = account.email;
+    const shouldReuse = reuseIfOpen === 'true';
 
-    console.log(`\n🌐 Opening fresh browser for account: ${account.email} (no profile, login from scratch)`);
+    console.log(`\n🌐 Opening browser for account: ${email} (with profile, reuse: ${shouldReuse})`);
 
     const browserService = require('../services/browser.service');
     const googleAuthService = require('../services/google.auth.service');
     
-    // Always launch fresh browser without profile
-    let browser = await browserService.launchBrowser(false); // No profile passed
-    let page = await browserService.createPage(browser);
+    // Launch browser WITH profile OR reuse existing browser with new tab
+    const { browser, page, isNewBrowser } = await browserService.launchBrowser(
+      false,      // Not headless
+      email,      // Email for profile
+      3,          // Retries
+      shouldReuse // Reuse if already open
+    );
 
-    // Track this browser
-    openBrowsers.set(account.email, {
-      browser,
-      openedAt: new Date()
-    });
-
-    // Listen for browser disconnect to clean up
-    browser.on('disconnected', () => {
-      console.log(`🔴 Browser closed for ${account.email}`);
-      openBrowsers.delete(account.email);
-    });
-
-    // Navigate to Google login page to start fresh login
-    await page.goto('https://accounts.google.com', { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000));
-    
-    let loginAttempted = false;
-    let loginSuccess = false;
-    
-    // Always attempt login from scratch
-    if (account.password) {
-      console.log(`🔐 Attempting login with stored credentials for ${account.email}...`);
-      loginAttempted = true;
-      
-      try {
-        await googleAuthService.login(page, account.email, account.password);
-        
-        // Verify login was successful - go to YouTube
-        console.log(`🔄 Navigating to YouTube to verify login...`);
-        await page.goto('https://www.youtube.com', { waitUntil: 'networkidle2', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 3000));
-        
-        // Check if logged in (simple check - look for account menu or profile)
-        const isLoggedIn = await page.$('button[aria-label*="Account"], img[alt*="Avatar"], #avatar-btn') !== null;
-        
-        if (isLoggedIn) {
-          console.log(`✅ Login successful for ${account.email}`);
-          loginSuccess = true;
-        } else {
-          console.error(`❌ Login verification failed for ${account.email}`);
-          console.log(`ℹ️  Please check the browser and login manually if needed`);
-        }
-      } catch (loginError) {
-        console.error(`❌ Login failed: ${loginError.message}`);
-        console.log(`ℹ️  Please login manually in the browser`);
-      }
+    if (isNewBrowser) {
+      console.log(`🆕 Launched new browser for [${email}]`);
     } else {
-      console.log(`⚠️  No password stored for ${account.email}`);
-      console.log(`ℹ️  Please login manually in the browser`);
+      console.log(`🔄 Reused existing browser, opened new tab for [${email}]`);
     }
-    
-    console.log(`ℹ️  Browser will stay open - close it manually when done`);
 
-    const responseMessage = loginAttempted 
-      ? `Fresh browser opened for ${account.email}. ${loginSuccess ? 'Login successful.' : 'Login failed - please login manually.'}`
-      : `Fresh browser opened for ${account.email}. Please login manually.`;
-    
+    // Navigate to YouTube Studio to check session
+    console.log('🎬 Navigating to YouTube Studio...');
+    await page.goto('https://studio.youtube.com', {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Check if needs login
+    const currentUrl = page.url();
+    const needsLogin = currentUrl.includes('accounts.google.com') || 
+                      currentUrl.includes('signin') ||
+                      currentUrl.includes('ServiceLogin');
+
+    if (needsLogin) {
+      console.log('🔐 Session expired, logging in...');
+      
+      if (!account.password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account password not found, cannot auto-login',
+          data: {
+            email: email,
+            isNewBrowser: isNewBrowser,
+            note: 'Please login manually in the browser window'
+          }
+        });
+      }
+
+      await googleAuthService.login(page, email, account.password);
+      
+      // Navigate back to YouTube Studio
+      console.log('🎬 Returning to YouTube Studio...');
+      await page.goto('https://studio.youtube.com', {
+        waitUntil: 'networkidle2',
+        timeout: 60000
+      });
+      await new Promise(r => setTimeout(r, 3000));
+      
+      console.log(`✅ Login successful for ${email}`);
+    } else {
+      console.log('✅ Already logged in (session valid), skipping login');
+    }
+
+    // Return success response
     return res.json({
       success: true,
-      message: responseMessage,
+      message: isNewBrowser 
+        ? `Browser opened for ${email}` 
+        : `New tab opened in existing browser for ${email}`,
       data: {
-        email: account.email,
-        sessionValid: loginSuccess,
-        loginAttempted: loginAttempted,
-        loginSuccess: loginSuccess,
-        note: loginSuccess
-          ? 'Login successful. You can continue working.'
-          : account.password 
-            ? 'Login failed. Check browser window and login manually.'
-            : 'No password stored. Please login manually in the browser.'
+        email: email,
+        isNewBrowser: isNewBrowser,
+        sessionValid: !needsLogin,
+        note: 'Browser will stay open - close it manually when done'
       }
     });
 
   } catch (error) {
     console.error('❌ Error opening browser:', error);
-    
-    // Clean up on error
-    const account = await AccountYoutube.findByPk(req.params.id);
-    if (account && openBrowsers.has(account.email)) {
-      openBrowsers.delete(account.email);
-    }
     
     return res.status(500).json({
       success: false,
@@ -409,24 +390,18 @@ exports.openBrowserWithProfile = async (req, res) => {
  */
 exports.getOpenBrowsers = async (req, res) => {
   try {
-    const browsers = Array.from(openBrowsers.entries()).map(([email, info]) => ({
-      email,
-      openedAt: info.openedAt,
-      duration: Math.floor((Date.now() - info.openedAt.getTime()) / 1000) // seconds
-    }));
+    const browserService = require('../services/browser.service');
+    const browsers = browserService.getActiveBrowsers();
 
     return res.json({
       success: true,
-      data: {
-        count: browsers.length,
-        browsers
-      }
+      count: browsers.length,
+      data: browsers
     });
   } catch (error) {
     console.error('❌ Error getting open browsers:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to get open browsers',
       error: error.message
     });
   }
@@ -455,41 +430,26 @@ exports.closeBrowser = async (req, res) => {
       });
     }
 
-    // Check if browser is open for this email
-    if (!openBrowsers.has(account.email)) {
+    const browserService = require('../services/browser.service');
+    const closed = await browserService.closeBrowser(account.email);
+
+    if (closed) {
+      return res.json({
+        success: true,
+        message: `Browser closed for ${account.email}`
+      });
+    } else {
       return res.status(404).json({
         success: false,
-        message: `No open browser found for ${account.email}`
+        message: `No active browser found for ${account.email}`
       });
     }
-
-    const { browser } = openBrowsers.get(account.email);
-    
-    // Close browser
-    await browser.close();
-    
-    // Remove from tracking
-    openBrowsers.delete(account.email);
-
-    console.log(`🔴 Browser closed for ${account.email}`);
-
-    return res.json({
-      success: true,
-      message: `Browser closed for ${account.email}`
-    });
 
   } catch (error) {
     console.error('❌ Error closing browser:', error);
     
-    // Clean up on error
-    const account = await AccountYoutube.findByPk(req.params.id);
-    if (account && openBrowsers.has(account.email)) {
-      openBrowsers.delete(account.email);
-    }
-    
     return res.status(500).json({
       success: false,
-      message: 'Failed to close browser',
       error: error.message
     });
   }
