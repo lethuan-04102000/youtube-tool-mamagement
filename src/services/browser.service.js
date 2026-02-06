@@ -5,15 +5,65 @@ const sessionService = require('./session.service');
 puppeteer.use(StealthPlugin());
 
 class BrowserService {
+  constructor() {
+    // Track active browsers: Map<email, { browser, pages: Page[] }>
+    this.activeBrowsers = new Map();
+  }
+
+  /**
+   * Get active browser for email (if exists)
+   */
+  getActiveBrowser(email) {
+    return this.activeBrowsers.get(email);
+  }
+
+  /**
+   * Check if browser is still open and valid
+   */
+  async isBrowserActive(email) {
+    const browserInfo = this.activeBrowsers.get(email);
+    if (!browserInfo) return false;
+
+    try {
+      // Check if browser process is still running
+      const pages = await browserInfo.browser.pages();
+      return pages.length > 0;
+    } catch (error) {
+      // Browser crashed or closed
+      this.activeBrowsers.delete(email);
+      return false;
+    }
+  }
 
   /**
    * Launch browser with optional profile for email
+   * OR reuse existing browser and open new tab
    * @param {boolean|null} headless - Headless mode
    * @param {string|null} email - Email to load profile for (null = no profile)
    * @param {number} retries - Number of retry attempts
-   * @returns {Promise<Browser>}
+   * @param {boolean} reuseIfOpen - If true, reuse existing browser (open new tab instead of new browser)
+   * @returns {Promise<{browser: Browser, page: Page, isNewBrowser: boolean}>}
    */
-  async launchBrowser(headless = null, email = null, retries = 3) {
+  async launchBrowser(headless = null, email = null, retries = 3, reuseIfOpen = true) {
+    // Check if browser already open for this email and should reuse
+    if (reuseIfOpen && email) {
+      const isActive = await this.isBrowserActive(email);
+      
+      if (isActive) {
+        console.log(`🔄 Browser already open for [${email}], opening new tab...`);
+        const browserInfo = this.activeBrowsers.get(email);
+        const page = await this.createPage(browserInfo.browser);
+        
+        // Track new page
+        browserInfo.pages.push(page);
+        
+        return {
+          browser: browserInfo.browser,
+          page: page,
+          isNewBrowser: false
+        };
+      }
+    }
     // Use env variable if not explicitly set
     const isHeadless = headless !== null
       ? headless
@@ -88,9 +138,28 @@ class BrowserService {
         }
 
         const browser = await puppeteer.launch(launchOptions);
+        const page = await this.createPage(browser);
+
+        // Track browser and page
+        if (email) {
+          this.activeBrowsers.set(email, {
+            browser: browser,
+            pages: [page]
+          });
+
+          // Clean up when browser closes
+          browser.on('disconnected', () => {
+            console.log(`🔴 Browser closed for [${email}]`);
+            this.activeBrowsers.delete(email);
+          });
+        }
 
         console.log(`✅ Browser launched successfully`);
-        return browser;
+        return {
+          browser: browser,
+          page: page,
+          isNewBrowser: true
+        };
       } catch (error) {
         console.error(`❌ Browser launch attempt ${attempt}/${retries} failed: ${error.message}`);
         if (attempt < retries) {
@@ -308,6 +377,68 @@ class BrowserService {
     } catch (error) {
       // Ignore
     }
+  }
+
+  /**
+   * Close specific page/tab
+   */
+  async closePage(email, page) {
+    const browserInfo = this.activeBrowsers.get(email);
+    if (!browserInfo) return;
+
+    try {
+      await page.close();
+      
+      // Remove from tracked pages
+      browserInfo.pages = browserInfo.pages.filter(p => p !== page);
+      
+      console.log(`🗑️  Closed tab for [${email}]. Remaining tabs: ${browserInfo.pages.length}`);
+      
+      // If no pages left, close browser
+      if (browserInfo.pages.length === 0) {
+        await browserInfo.browser.close();
+        this.activeBrowsers.delete(email);
+        console.log(`🔴 Browser closed for [${email}] (no tabs remaining)`);
+      }
+    } catch (error) {
+      console.error('Error closing page:', error);
+    }
+  }
+
+  /**
+   * Close browser for email
+   */
+  async closeBrowser(email) {
+    const browserInfo = this.activeBrowsers.get(email);
+    if (!browserInfo) {
+      console.log(`⚠️  No active browser found for [${email}]`);
+      return false;
+    }
+
+    try {
+      await browserInfo.browser.close();
+      this.activeBrowsers.delete(email);
+      console.log(`✅ Browser closed for [${email}]`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Error closing browser for [${email}]:`, error);
+      this.activeBrowsers.delete(email); // Clean up anyway
+      return false;
+    }
+  }
+
+  /**
+   * Get all active browsers
+   */
+  getActiveBrowsers() {
+    const result = [];
+    for (const [email, info] of this.activeBrowsers.entries()) {
+      result.push({
+        email: email,
+        tabCount: info.pages.length
+      });
+    }
+    return result;
   }
 }
 

@@ -20,6 +20,7 @@ class GoogleDriveService {
     async downloadFromDrive(driveUrl, downloadPath) {
         let browser = null;
         let page = null;
+        let browserResult = null;
 
         try {
             console.log(`\n📥 Tải video từ Google Drive`);
@@ -30,8 +31,9 @@ class GoogleDriveService {
                 fs.mkdirSync(downloadPath, { recursive: true });
             }
 
-            browser = await browserService.launchBrowser(false);
-            page = await browserService.createPage(browser);
+            browserResult = await browserService.launchBrowser(false, null, 3, false);
+            browser = browserResult.browser;
+            page = browserResult.page;
 
             // Cấu hình download behavior với CDP
             const client = await page.target().createCDPSession();

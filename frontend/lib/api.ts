@@ -144,8 +144,19 @@ export interface UploadedVideo {
   video_url: string;
   title?: string;
   source_url?: string;
-  createdAt: string;
-  updatedAt: string;
+  source_url_hash?: string;
+  local_file_path?: string;
+  video_description?: string;
+  video_visibility?: 'public' | 'unlisted' | 'private';
+  schedule_date?: string;
+  status?: string;
+  error_message?: string;
+  download_attempts?: number;
+  upload_attempts?: number;
+  downloaded_at?: string;
+  uploaded_at?: string;
+  created_at: string;  // Changed from createdAt to created_at
+  updated_at: string;  // Changed from updatedAt to updated_at
   account?: {
     id: number;
     email: string;

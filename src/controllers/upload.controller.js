@@ -74,7 +74,8 @@ class UploadController {
       const result = await youtubeUploadService.uploadVideo(
         account.email,
         videoPath,
-        { title, description, visibility, tags, scheduleDate }
+        { title, description, visibility, tags, scheduleDate },
+        { closeBrowser: req.body.closeBrowser || false } // Có thể truyền từ frontend
       );
 
       const statusCode = result.success ? 200 : 400;
@@ -163,7 +164,8 @@ class UploadController {
             visibility, 
             tags, 
             scheduleDate 
-          }
+          },
+          { closeBrowser: req.body.closeBrowser || false }
         );
 
         // Xóa file đã upload sau khi hoàn tất (thành công hay thất bại)
@@ -428,7 +430,7 @@ class UploadController {
         where: whereClause,
         limit: parseInt(limit),
         offset: offset,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']], // Use snake_case because model has underscored: true
         include: [
           {
             model: AccountYoutube,

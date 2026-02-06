@@ -183,12 +183,14 @@ export default function ListVideosPage() {
     });
   };
 
-  const extractVideoId = (url: string) => {
+  const extractVideoId = (url: string | null | undefined) => {
+    if (!url) return null;
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?]+)/);
     return match ? match[1] : null;
   };
 
-  const getThumbnail = (videoUrl: string) => {
+  const getThumbnail = (videoUrl: string | null | undefined) => {
+    if (!videoUrl) return null;
     const videoId = extractVideoId(videoUrl);
     return videoId ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg` : null;
   };
@@ -266,9 +268,15 @@ export default function ListVideosPage() {
                             <p className="text-sm font-medium text-gray-900 truncate">
                               {video.title || 'Untitled'}
                             </p>
-                            <p className="text-xs text-gray-500 truncate">
-                              ID: {extractVideoId(video.video_url)}
-                            </p>
+                            {video.video_url ? (
+                              <p className="text-xs text-gray-500 truncate">
+                                ID: {extractVideoId(video.video_url) || 'N/A'}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-orange-500">
+                                Chưa upload
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -298,19 +306,25 @@ export default function ListVideosPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 text-xs text-gray-600">
                           <Calendar className="w-3 h-3" />
-                          {formatDate(video.createdAt)}
+                          {formatDate(video.created_at)}
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <a
-                          href={video.video_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          YouTube
-                        </a>
+                        {video.video_url ? (
+                          <a
+                            href={video.video_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            YouTube
+                          </a>
+                        ) : (
+                          <span className="text-xs text-gray-400 px-3 py-1">
+                            Pending
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
