@@ -1,27 +1,24 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2, Plus, Trash2, Search, ChevronDown } from 'lucide-react';
+import { Upload, CheckCircle, XCircle, Loader2, Search, ChevronDown, FileVideo, Link2 } from 'lucide-react';
 import { api, type Account, type BatchUploadVideoItem, type BatchUploadResult } from '@/lib/api';
-
-interface VideoInput extends BatchUploadVideoItem {
-  id: string;
-  videoFile?: File;
-}
 
 export default function UploadVideoPage() {
   const [channels, setChannels] = useState<Account[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
-  const [videos, setVideos] = useState<VideoInput[]>([
-    { id: '1', sourceUrl: '', visibility: 'public' }
-  ]);
+  const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url');
+  const [urlsText, setUrlsText] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState<BatchUploadResult[] | null>(null);
   const [loadingChannels, setLoadingChannels] = useState(true);
-  const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [globalVisibility, setGlobalVisibility] = useState<'public' | 'unlisted' | 'private'>('public');
+  const [globalScheduleDate, setGlobalScheduleDate] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadChannels();
@@ -50,111 +47,138 @@ export default function UploadVideoPage() {
     }
   };
 
-  const addVideoInput = () => {
-    if (videos.length >= 4) return;
-    const newId = (Math.max(...videos.map(v => parseInt(v.id))) + 1).toString();
-    setVideos([...videos, { id: newId, sourceUrl: '', visibility: 'public' }]);
+  const parseUrls = (text: string): string[] => {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0 && (line.startsWith('http://') || line.startsWith('https://')));
   };
 
-  const removeVideoInput = (id: string) => {
-    if (videos.length === 1) return;
-    setVideos(videos.filter(v => v.id !== id));
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    
+    if (files.length > 15) {
+      alert('Tối đa 15 files mỗi lần upload');
+      return;
+    }
+
+    // Validate file types (video only)
+    const validFiles = files.filter(file => {
+      const isVideo = file.type.startsWith('video/');
+      if (!isVideo) {
+        alert(`File "${file.name}" không phải là video`);
+      }
+      return isVideo;
+    });
+
+    setSelectedFiles(validFiles);
   };
 
-  const updateVideoInput = (id: string, field: keyof VideoInput, value: any) => {
-    setVideos(videos.map(v => v.id === id ? { ...v, [field]: value } : v));
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!selectedChannel) {
-      alert('Vui lòng chọn kênh');
+      alert('Vui lòng chọn kênh YouTube');
       return;
     }
 
     // Validate based on upload mode
     if (uploadMode === 'url') {
-      const emptyVideos = videos.filter(v => !v.sourceUrl.trim());
-      if (emptyVideos.length > 0) {
-        alert('Vui lòng nhập link video cho tất cả các ô');
+      const urls = parseUrls(urlsText);
+
+      if (urls.length === 0) {
+        alert('Vui lòng nhập ít nhất 1 URL video (mỗi URL trên 1 dòng)');
         return;
       }
-    } else {
-      const emptyFiles = videos.filter(v => !v.videoFile);
-      if (emptyFiles.length > 0) {
-        alert('Vui lòng chọn file video cho tất cả các ô');
+
+      if (urls.length > 15) {
+        alert('Tối đa 15 videos mỗi lần upload. Bạn đã nhập ' + urls.length + ' URLs');
         return;
       }
-    }
 
-    setUploading(true);
-    setResults(null);
+      setUploading(true);
+      setResults(null);
 
-    try {
-      if (uploadMode === 'url') {
-        // Batch upload from URLs
+      try {
+        // Build videos array from URLs
+        const videos: BatchUploadVideoItem[] = urls.map(url => ({
+          sourceUrl: url,
+          visibility: globalVisibility,
+          scheduleDate: globalScheduleDate || undefined,
+        }));
+
+        // Call batch upload API
         const response = await api.upload.batchUpload({
           id: selectedChannel,
-          videos: videos.map(({ id, videoFile, ...rest }) => rest),
+          videos,
         });
         
         setResults(response.data?.results || []);
 
         if (response.success && response.data?.summary.success) {
-          setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
+          setUrlsText('');
         }
-      } else {
-        // Upload files one by one
-        const results: BatchUploadResult[] = [];
-        
-        for (let i = 0; i < videos.length; i++) {
-          const video = videos[i];
-          try {
-            const response = await api.upload.downloadAndUpload({
-              id: selectedChannel,
-              videoFile: video.videoFile,
-              title: video.title,
-              description: video.description,
-              visibility: video.visibility,
-              scheduleDate: video.scheduleDate,
-            });
-            
-            results.push({
-              index: i + 1,
-              sourceUrl: video.videoFile?.name || 'file-upload',
-              success: response.success,
-              message: response.message,
-              videoUrl: response.data?.videoUrl,
-              error: response.error,
-            });
-          } catch (error: any) {
-            results.push({
-              index: i + 1,
-              sourceUrl: video.videoFile?.name || 'file-upload',
-              success: false,
-              message: 'Upload failed',
-              error: error.message,
-            });
-          }
-          
-          // Delay between uploads
-          if (i < videos.length - 1) {
-            await new Promise(r => setTimeout(r, 2000));
-          }
-        }
-        
-        setResults(results);
-        
-        // Reset on success
-        if (results.some(r => r.success)) {
-          setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
-        }
+      } catch (error: any) {
+        alert(error.message || 'Upload failed');
+      } finally {
+        setUploading(false);
       }
-    } catch (error: any) {
-      alert(error.message || 'Upload failed');
-    } finally {
-      setUploading(false);
+    } else {
+      // Upload files from computer
+      if (selectedFiles.length === 0) {
+        alert('Vui lòng chọn ít nhất 1 file video');
+        return;
+      }
+
+      if (selectedFiles.length > 15) {
+        alert('Tối đa 15 files mỗi lần upload');
+        return;
+      }
+
+      setUploading(true);
+      setResults(null);
+
+      try {
+        const formData = new FormData();
+        formData.append('id', selectedChannel.toString());
+        formData.append('visibility', globalVisibility);
+        if (globalScheduleDate) {
+          formData.append('scheduleDate', globalScheduleDate);
+        }
+
+        // Add all files with the same field name 'video'
+        selectedFiles.forEach((file) => {
+          formData.append('video', file);
+        });
+
+        // Call batch file upload API
+        const response = await api.upload.batchUploadFiles(formData);
+        
+        setResults(response.data?.results || []);
+
+        if (response.success && response.data?.summary.success) {
+          setSelectedFiles([]);
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+        }
+      } catch (error: any) {
+        alert(error.message || 'Upload failed');
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
@@ -172,116 +196,76 @@ export default function UploadVideoPage() {
   });
 
   const selectedChannelData = channels.find(c => c.id === selectedChannel);
-
+  const urlCount = parseUrls(urlsText).length;
+  const fileCount = selectedFiles.length;
+  const itemCount = uploadMode === 'url' ? urlCount : fileCount;
   const successCount = results?.filter(r => r.success).length || 0;
   const totalCount = results?.length || 0;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Upload Video</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Download và upload video lên YouTube (tối đa 4 videos cùng lúc)
+        <h1 className="text-3xl font-bold text-gray-900">🎬 Upload Video</h1>
+        <p className="text-sm text-gray-600 mt-2">
+          Upload tối đa <span className="font-semibold text-blue-600">15 videos</span> cùng lúc.{' '}
+          <span className="font-semibold">Nhập URLs</span> để tải từ TikTok, Facebook... hoặc{' '}
+          <span className="font-semibold">Chọn files</span> từ máy tính.
         </p>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        {/* Upload Mode Tabs */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Nguồn Video
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                console.log('Switching to URL mode');
-                setUploadMode('url');
-                setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
-                setResults(null);
-              }}
-              className={`px-4 py-3 rounded-md border text-sm font-medium transition-colors ${
-                uploadMode === 'url'
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-              }`}
-            >
-              🔗 Từ URL
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                console.log('Switching to File mode');
-                setUploadMode('file');
-                setVideos([{ id: '1', sourceUrl: '', visibility: 'public' }]);
-                setResults(null);
-              }}
-              className={`px-4 py-3 rounded-md border text-sm font-medium transition-colors ${
-                uploadMode === 'file'
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-              }`}
-            >
-              📁 Từ File
-            </button>
-          </div>
-        </div>
-
+      <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Channel Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Kênh YouTube
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              🎯 Kênh YouTube
             </label>
             {loadingChannels ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-gray-600">Đang tải danh sách kênh...</span>
               </div>
             ) : (
               <div className="relative" ref={dropdownRef}>
-                {/* Custom Dropdown Button */}
                 <button
                   type="button"
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white text-left flex items-center justify-between hover:bg-gray-50"
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white text-left flex items-center justify-between hover:bg-gray-50 hover:border-blue-400 transition-all"
                 >
                   {selectedChannelData ? (
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate">
+                      <div className="font-semibold text-gray-900 truncate">
                         {selectedChannelData.channelName || 'Chưa có tên kênh'}
                       </div>
-                      <div className="text-xs text-gray-500 truncate">
+                      <div className="text-xs text-gray-500 truncate mt-0.5">
                         {selectedChannelData.email}
                       </div>
                     </div>
                   ) : (
-                    <span className="text-gray-500">-- Chọn kênh --</span>
+                    <span className="text-gray-500">-- Chọn kênh YouTube --</span>
                   )}
-                  <ChevronDown className={`w-4 h-4 text-gray-400 ml-2 transition-transform ${isDropdownOpen ? 'transform rotate-180' : ''}`} />
+                  <ChevronDown className={`w-5 h-5 text-gray-400 ml-2 transition-transform ${isDropdownOpen ? 'transform rotate-180' : ''}`} />
                 </button>
 
-                {/* Dropdown Menu */}
                 {isDropdownOpen && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-80 overflow-hidden">
-                    {/* Search Input */}
-                    <div className="p-2 border-b border-gray-200 sticky top-0 bg-white">
+                  <div className="absolute z-20 w-full mt-2 bg-white border-2 border-gray-300 rounded-lg shadow-xl max-h-96 overflow-hidden">
+                    <div className="p-3 border-b-2 border-gray-200 sticky top-0 bg-white">
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <input
                           type="text"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder="Tìm kênh hoặc email..."
-                          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Tìm kiếm kênh hoặc email..."
+                          className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           onClick={(e) => e.stopPropagation()}
                         />
                       </div>
                     </div>
 
-                    {/* Channel List */}
-                    <div className="max-h-60 overflow-y-auto">
+                    <div className="max-h-72 overflow-y-auto">
                       {filteredChannels.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm text-gray-500">
+                        <div className="px-4 py-8 text-center text-sm text-gray-500">
                           Không tìm thấy kênh nào
                         </div>
                       ) : (
@@ -308,7 +292,7 @@ export default function UploadVideoPage() {
                                 </div>
                               </div>
                               {selectedChannel === channel.id && (
-                                <CheckCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                                <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                               )}
                             </div>
                           </button>
@@ -321,206 +305,240 @@ export default function UploadVideoPage() {
             )}
           </div>
 
-          {/* Video Inputs */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between mb-4">
-              <label className="block text-sm font-medium text-gray-700">
-                Danh sách video ({videos.length}/4)
-              </label>
-              {videos.length < 4 && (
-                <button
-                  type="button"
-                  onClick={addVideoInput}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors shadow-sm"
-                >
-                  Thêm video
-                </button>
-              )}
-            </div>
-
-            {videos.map((video, index) => (
-              <div key={`${uploadMode}-${video.id}`} className="border-2 border-gray-300 rounded-lg p-5 space-y-4 bg-white shadow-sm">
-                <div className="flex items-center justify-between pb-3 border-b border-gray-200">
-                  <span className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-                      {index + 1}
-                    </span>
-                    Video {index + 1}
-                  </span>
-                  {videos.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeVideoInput(video.id)}
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 hover:text-white hover:bg-red-600 border border-red-600 rounded transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Xóa
-                    </button>
-                  )}
-                </div>
-
-                {/* Source URL or File */}
-                {uploadMode === 'url' && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Link Video *
-                    </label>
-                    <input
-                      type="url"
-                      value={video.sourceUrl}
-                      onChange={(e) => updateVideoInput(video.id, 'sourceUrl', e.target.value)}
-                      placeholder="https://www.facebook.com/reel/..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
-                      required
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Facebook, TikTok, Instagram, Google Drive, etc.</p>
-                  </div>
-                )}
-
-                {uploadMode === 'file' && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Chọn File Video *
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="file"
-                        accept="video/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          console.log('File selected:', file?.name, file?.size);
-                          if (file) {
-                            // Update both videoFile and title in one state update
-                            setVideos(videos.map(v => {
-                              if (v.id === video.id) {
-                                return {
-                                  ...v,
-                                  videoFile: file,
-                                  title: v.title || file.name.replace(/\.[^/.]+$/, '')
-                                };
-                              }
-                              return v;
-                            }));
-                          }
-                        }}
-                        className="hidden"
-                        id={`file-input-${video.id}`}
-                      />
-                      <label
-                        htmlFor={`file-input-${video.id}`}
-                        className="flex items-center justify-center w-full px-4 py-8 border-2 border-dashed border-gray-300 rounded-md cursor-pointer hover:border-blue-400 transition-colors bg-white"
-                      >
-                        <div className="text-center">
-                          {video.videoFile ? (
-                            <>
-                              <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" />
-                              <p className="text-sm text-gray-700 font-medium">{video.videoFile.name}</p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {(video.videoFile.size / 1024 / 1024).toFixed(2)} MB
-                              </p>
-                              <p className="text-xs text-blue-600 mt-2">Click để chọn file khác</p>
-                            </>
-                          ) : (
-                            <>
-                              <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                              <p className="text-sm text-gray-600">Click để chọn file</p>
-                              <p className="text-xs text-gray-500 mt-1">MP4, MOV, AVI, etc.</p>
-                            </>
-                          )}
-                        </div>
-                      </label>
+          {/* Upload Mode Selection */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
+              📋 Chọn cách upload
+            </label>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadMode('url');
+                  setResults(null);
+                }}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  uploadMode === 'url'
+                    ? 'bg-blue-50 border-blue-600 shadow-md'
+                    : 'bg-white border-gray-300 hover:border-blue-400'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Link2 className={`w-6 h-6 ${uploadMode === 'url' ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <div className="text-left">
+                    <div className={`font-semibold ${uploadMode === 'url' ? 'text-blue-900' : 'text-gray-700'}`}>
+                      Nhập URLs
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      Tải video từ TikTok, Facebook, Instagram...
                     </div>
                   </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadMode('file');
+                  setResults(null);
+                }}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  uploadMode === 'file'
+                    ? 'bg-blue-50 border-blue-600 shadow-md'
+                    : 'bg-white border-gray-300 hover:border-blue-400'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <FileVideo className={`w-6 h-6 ${uploadMode === 'file' ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <div className="text-left">
+                    <div className={`font-semibold ${uploadMode === 'file' ? 'text-blue-900' : 'text-gray-700'}`}>
+                      Chọn Files
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      Upload video từ máy tính (tối đa 15 files)
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* URLs Input or File Picker */}
+          {uploadMode === 'url' ? (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                🔗 Danh sách URLs {urlCount > 0 && (
+                  <span className={`ml-2 text-xs font-medium px-2 py-1 rounded ${
+                    urlCount > 15 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {urlCount}/15 videos
+                  </span>
                 )}
+              </label>
+              <textarea
+                value={urlsText}
+                onChange={(e) => setUrlsText(e.target.value)}
+                placeholder={`Nhập URLs của video (mỗi URL trên 1 dòng, tối đa 15 URLs)
 
-                {/* Title (Optional) */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Tiêu đề (tùy chọn)
-                  </label>
-                  <input
-                    type="text"
-                    value={video.title || ''}
-                    onChange={(e) => updateVideoInput(video.id, 'title', e.target.value)}
-                    placeholder="Tự động lấy từ video nguồn"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
-                  />
-                </div>
+Ví dụ:
+https://www.facebook.com/reel/123456789
+https://www.tiktok.com/@user/video/123456789
+https://www.instagram.com/reel/ABC123/
+https://drive.google.com/file/d/...
+`}
+                rows={12}
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono resize-none"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                ✅ Hỗ trợ: Facebook, TikTok, Instagram, Twitter, Google Drive, và nhiều nền tảng khác
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                📁 Chọn video files {fileCount > 0 && (
+                  <span className={`ml-2 text-xs font-medium px-2 py-1 rounded ${
+                    fileCount > 15 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {fileCount}/15 files
+                  </span>
+                )}
+              </label>
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+                id="file-upload"
+              />
+              
+              <label
+                htmlFor="file-upload"
+                className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all"
+              >
+                <FileVideo className="w-12 h-12 text-gray-400 mb-2" />
+                <span className="text-sm font-medium text-gray-700">Click để chọn files</span>
+                <span className="text-xs text-gray-500 mt-1">Hoặc kéo thả files vào đây</span>
+                <span className="text-xs text-gray-400 mt-2">Tối đa 15 files, định dạng video (.mp4, .mov, .avi...)</span>
+              </label>
 
-                {/* Description (Optional) */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Mô tả (tùy chọn)
-                  </label>
-                  <textarea
-                    value={video.description || ''}
-                    onChange={(e) => updateVideoInput(video.id, 'description', e.target.value)}
-                    placeholder="Mô tả video..."
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white resize-none"
-                  />
-                </div>
-
-                {/* Visibility */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Hiển thị
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(['public', 'unlisted', 'private'] as const).map((vis) => (
-                      <button
-                        key={vis}
-                        type="button"
-                        onClick={() => updateVideoInput(video.id, 'visibility', vis)}
-                        className={`px-2 py-2 rounded-md border text-xs font-medium transition-colors ${
-                          video.visibility === vis
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-                        }`}
+              {selectedFiles.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700">
+                      {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} đã chọn
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFiles([]);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 font-medium"
+                    >
+                      Xóa tất cả
+                    </button>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-3">
+                    {selectedFiles.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100 transition-colors"
                       >
-                        {vis === 'public' && '🌍 Public'}
-                        {vis === 'unlisted' && '🔗 Unlisted'}
-                        {vis === 'private' && '🔒 Private'}
-                      </button>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <FileVideo className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-900 truncate">
+                              {file.name}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatFileSize(file.size)}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeFile(index)}
+                          className="ml-2 text-red-600 hover:text-red-800 flex-shrink-0"
+                        >
+                          <XCircle className="w-5 h-5" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
+              )}
+            </div>
+          )}
 
-                {/* Schedule Date (Optional) */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Lên lịch (tùy chọn)
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={video.scheduleDate || ''}
-                    onChange={(e) => updateVideoInput(video.id, 'scheduleDate', e.target.value)}
-                    min={getMinDateTime()}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Để trống để đăng ngay. Tối thiểu 2 giờ sau hiện tại.
-                  </p>
+          {/* Global Settings */}
+          <div className="border-t-2 border-gray-200 pt-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-4">⚙️ Cài đặt chung cho tất cả videos</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Visibility */}
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-2">
+                  Chế độ hiển thị
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['public', 'unlisted', 'private'] as const).map((vis) => (
+                    <button
+                      key={vis}
+                      type="button"
+                      onClick={() => setGlobalVisibility(vis)}
+                      className={`px-3 py-2 rounded-md border-2 text-xs font-medium transition-all ${
+                        globalVisibility === vis
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                          : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                      }`}
+                    >
+                      {vis === 'public' && '�� Public'}
+                      {vis === 'unlisted' && '🔗 Unlisted'}
+                      {vis === 'private' && '🔒 Private'}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
+
+              {/* Schedule Date */}
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-2">
+                  Lên lịch đăng (tùy chọn)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={globalScheduleDate}
+                  onChange={(e) => setGlobalScheduleDate(e.target.value)}
+                  min={getMinDateTime()}
+                  className="w-full px-3 py-2 border-2 border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Để trống để đăng ngay
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={uploading || !selectedChannel}
-            className="w-full bg-blue-600 text-white px-4 py-3 rounded-md font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center text-sm shadow-sm"
+            disabled={uploading || !selectedChannel || itemCount === 0 || itemCount > 15}
+            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-lg font-semibold hover:from-blue-700 hover:to-blue-800 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center text-base shadow-lg disabled:shadow-none"
           >
             {uploading ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Đang upload {videos.length} video...
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                Đang xử lý {itemCount} {uploadMode === 'url' ? 'videos' : 'files'}...
               </>
             ) : (
               <>
-                <Upload className="w-4 h-4 mr-2" />
-                Upload {videos.length} Video{videos.length > 1 ? 's' : ''}
+                <Upload className="w-5 h-5 mr-2" />
+                Upload {itemCount} {uploadMode === 'url' ? 'Video' : 'File'}{itemCount > 1 ? 's' : ''}
               </>
             )}
           </button>
@@ -528,73 +546,74 @@ export default function UploadVideoPage() {
 
         {/* Results */}
         {results && results.length > 0 && (
-          <div className="mt-6 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-900">
-                Kết quả Upload
+          <div className="mt-8 space-y-3">
+            <div className="flex items-center justify-between pb-3 border-b-2 border-gray-200">
+              <h3 className="text-lg font-bold text-gray-900">
+                📊 Kết quả Upload
               </h3>
-              <span className={`text-xs font-medium px-2 py-1 rounded ${
+              <span className={`text-sm font-semibold px-3 py-1.5 rounded-full ${
                 successCount === totalCount 
-                  ? 'bg-green-100 text-green-700' 
+                  ? 'bg-green-100 text-green-700 border-2 border-green-300' 
                   : successCount > 0 
-                  ? 'bg-yellow-100 text-yellow-700' 
-                  : 'bg-red-100 text-red-700'
+                  ? 'bg-yellow-100 text-yellow-700 border-2 border-yellow-300' 
+                  : 'bg-red-100 text-red-700 border-2 border-red-300'
               }`}>
                 {successCount}/{totalCount} thành công
               </span>
             </div>
 
-            {results.map((result) => (
-              <div
-                key={result.index}
-                className={`p-3 rounded-md border ${
-                  result.success
-                    ? 'bg-green-50 border-green-200'
-                    : 'bg-red-50 border-red-200'
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  {result.success ? (
-                    <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-semibold ${
-                        result.success ? 'text-green-800' : 'text-red-800'
-                      }`}>
-                        Video {result.index}
-                      </span>
-                      <span className="text-xs text-gray-400">•</span>
-                      <span className="text-xs text-gray-600 truncate">
+            <div className="space-y-2">
+              {results.map((result) => (
+                <div
+                  key={result.index}
+                  className={`p-4 rounded-lg border-2 transition-all ${
+                    result.success
+                      ? 'bg-green-50 border-green-300 hover:shadow-md'
+                      : 'bg-red-50 border-red-300 hover:shadow-md'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    {result.success ? (
+                      <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-sm font-bold ${
+                          result.success ? 'text-green-800' : 'text-red-800'
+                        }`}>
+                          Video #{result.index}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 truncate mb-1">
                         {result.sourceUrl}
-                      </span>
-                    </div>
-                    <p className={`text-xs mt-1 ${
-                      result.success ? 'text-green-700' : 'text-red-700'
-                    }`}>
-                      {result.message}
-                    </p>
-                    {result.videoUrl && (
-                      <a
-                        href={result.videoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:underline mt-1 inline-block"
-                      >
-                        Xem video →
-                      </a>
-                    )}
-                    {result.error && !result.success && (
-                      <p className="text-xs text-red-600 mt-1 font-mono">
-                        Lỗi: {result.error}
                       </p>
-                    )}
+                      <p className={`text-sm font-medium ${
+                        result.success ? 'text-green-700' : 'text-red-700'
+                      }`}>
+                        {result.message}
+                      </p>
+                      {result.videoUrl && (
+                        <a
+                          href={result.videoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 hover:underline mt-2 font-medium"
+                        >
+                          🎬 Xem video trên YouTube →
+                        </a>
+                      )}
+                      {result.error && !result.success && (
+                        <p className="text-xs text-red-600 mt-2 font-mono bg-red-100 p-2 rounded">
+                          ❌ {result.error}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>

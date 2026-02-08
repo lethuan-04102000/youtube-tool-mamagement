@@ -169,14 +169,63 @@ class GoogleAuthService {
         throw new Error('Failed to enter password after 3 attempts');
       }
       
-      // Click Next button
+      // Click Next button and wait for navigation
       await new Promise(r => setTimeout(r, 1500));
-      await page.evaluate(() => {
-        const btn = document.querySelector('#passwordNext');
-        if (btn) btn.click();
-      });
       
-      await new Promise(r => setTimeout(r, 5000));
+      console.log('   Clicking passwordNext button...');
+      
+      let navigationSuccess = false;
+      for (let navAttempt = 1; navAttempt <= 2; navAttempt++) {
+        try {
+          console.log(`   Navigation attempt ${navAttempt}/2...`);
+          
+          // Click and wait for navigation/response
+          await Promise.all([
+            // Wait for either navigation or network idle
+            Promise.race([
+              page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
+              page.waitForResponse(response => 
+                response.url().includes('google.com') && response.status() === 200,
+                { timeout: 10000 }
+              ).catch(() => null)
+            ]).catch((e) => {
+              console.log(`   No navigation/response: ${e.message}`);
+            }),
+            
+            // Click the button
+            page.evaluate(() => {
+              const btn = document.querySelector('#passwordNext');
+              if (btn) btn.click();
+            })
+          ]);
+          
+          console.log('   After passwordNext click, waiting...');
+          await new Promise(r => setTimeout(r, 3000));
+          
+          // Check if page is still valid
+          try {
+            await page.evaluate(() => document.readyState);
+            navigationSuccess = true;
+            console.log('   ✅ Navigation successful');
+            break;
+          } catch (e) {
+            console.log(`   ⚠️  Page context lost: ${e.message}`);
+            if (navAttempt < 2) {
+              console.log('   Retrying...');
+              await new Promise(r => setTimeout(r, 2000));
+            }
+          }
+        } catch (e) {
+          console.log(`   ❌ Navigation attempt ${navAttempt} error:`, e.message);
+          if (navAttempt < 2) {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+      }
+      
+      if (!navigationSuccess) {
+        throw new Error('Failed to navigate after clicking passwordNext (context destroyed)');
+      }
 
       // Check password error
       const errorPassword = await page.$('.o6cuMc');

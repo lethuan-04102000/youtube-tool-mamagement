@@ -40,17 +40,29 @@ class VerifyAuthenticatorController {
           const account = accounts[i];
           
           try {
-            // Normalize is_create_channel flag from CSV (accept '1','true','yes', boolean)
-            let isCreateChannelFlag = false;
-            if (account.hasOwnProperty('is_create_channel')) {
-              const v = account.is_create_channel;
-              if (typeof v === 'string') {
-                const s = v.trim().toLowerCase();
-                isCreateChannelFlag = s === '1' || s === 'true' || s === 'yes';
-              } else {
-                isCreateChannelFlag = !!v;
+            // Normalize boolean flags from CSV (accept '1','true','yes', boolean)
+            const normalizeBool = (value) => {
+              if (!value) return false;
+              if (typeof value === 'string') {
+                const s = value.trim().toLowerCase();
+                return s === '1' || s === 'true' || s === 'yes';
               }
-            }
+              return !!value;
+            };
+
+            const isCreateChannelFlag = normalizeBool(account.is_create_channel);
+            const isAuthenticatorFlag = normalizeBool(account.is_authenticator);
+            const isUploadAvatarFlag = normalizeBool(account.is_upload_avatar);
+            
+            // Extract code_authenticators if provided
+            const codeAuthenticators = account.code_authenticators && account.code_authenticators.trim() 
+              ? account.code_authenticators.trim() 
+              : null;
+            
+            // Extract channel_link if provided
+            const channelLink = account.channel_link && account.channel_link.trim()
+              ? account.channel_link.trim()
+              : null;
 
             const [accountRecord, created] = await AccountYoutube.findOrCreate({
               where: { email: account.email },
@@ -58,39 +70,83 @@ class VerifyAuthenticatorController {
                 email: account.email,
                 password: account.password,
                 channel_name: account.channel_name,
+                channel_link: channelLink,
                 avatar_url: account.avatar_url || null,
                 recovery_email: account.recovery_email || null,
-                code_authenticators: null,
-                is_authenticator: false,
-                // If CSV indicates channel already created, set it so we won't create later
-                is_create_channel: isCreateChannelFlag
+                code_authenticators: codeAuthenticators,
+                is_authenticator: isAuthenticatorFlag,
+                is_create_channel: isCreateChannelFlag,
+                is_upload_avatar: isUploadAvatarFlag
               }
             });
             
             if (created) {
               console.log(`  ✅ ${account.email} - NEW`);
+              if (channelLink) {
+                console.log(`     🔗 channel_link: ${channelLink}`);
+              }
+              if (codeAuthenticators) {
+                console.log(`     🔐 code_authenticators: ${codeAuthenticators.substring(0, 10)}...`);
+              }
+              if (isAuthenticatorFlag) {
+                console.log(`     ✅ is_authenticator: true`);
+              }
+              if (isCreateChannelFlag) {
+                console.log(`     ✅ is_create_channel: true`);
+              }
+              if (isUploadAvatarFlag) {
+                console.log(`     ✅ is_upload_avatar: true`);
+              }
             } else {
               console.log(`  ℹ️  ${account.email} - EXISTS`);
               
+              // Prepare update fields
+              const updateFields = {};
+              
+              // Update channel_link if provided in CSV and not already set
+              if (channelLink && !accountRecord.channel_link) {
+                updateFields.channel_link = channelLink;
+                console.log(`     🔗 Will update channel_link: ${channelLink}`);
+              }
+              
               // Update avatar_url if provided in CSV and not already set
               if (account.avatar_url && !accountRecord.avatar_url) {
-                await AccountYoutube.update(
-                  { avatar_url: account.avatar_url },
-                  { where: { email: account.email } }
-                );
-                console.log(`     📥 Updated avatar_url for ${account.email}`);
+                updateFields.avatar_url = account.avatar_url;
+                console.log(`     📥 Will update avatar_url`);
               }
-
-              // If CSV explicitly marks is_create_channel=true, update DB so we skip channel creation later
-              if (account.hasOwnProperty('is_create_channel') && isCreateChannelFlag && !accountRecord.is_create_channel) {
+              
+              // Update code_authenticators if provided in CSV and not already set
+              if (codeAuthenticators && !accountRecord.code_authenticators) {
+                updateFields.code_authenticators = codeAuthenticators;
+                console.log(`     � Will update code_authenticators: ${codeAuthenticators.substring(0, 10)}...`);
+              }
+              
+              // Update status flags if CSV marks them as true and DB doesn't have them yet
+              if (isAuthenticatorFlag && !accountRecord.is_authenticator) {
+                updateFields.is_authenticator = true;
+                console.log(`     ✅ Will mark is_authenticator=true`);
+              }
+              
+              if (isCreateChannelFlag && !accountRecord.is_create_channel) {
+                updateFields.is_create_channel = true;
+                console.log(`     ✅ Will mark is_create_channel=true`);
+              }
+              
+              if (isUploadAvatarFlag && !accountRecord.is_upload_avatar) {
+                updateFields.is_upload_avatar = true;
+                console.log(`     ✅ Will mark is_upload_avatar=true`);
+              }
+              
+              // Apply updates if any
+              if (Object.keys(updateFields).length > 0) {
                 try {
                   await AccountYoutube.update(
-                    { is_create_channel: true },
+                    updateFields,
                     { where: { email: account.email } }
                   );
-                  console.log(`     ✅ Marked is_create_channel=true for ${account.email} (from CSV)`);
+                  console.log(`     💾 Updated fields from CSV`);
                 } catch (err) {
-                  console.error(`     ❌ Failed to update is_create_channel for ${account.email}:`, err.message);
+                  console.error(`     ❌ Failed to update ${account.email}:`, err.message);
                 }
               }
             }
@@ -280,6 +336,7 @@ class VerifyAuthenticatorController {
       const concurrentBrowsers = parseInt(process.env.CONCURRENT_TABS) || 5;
       
       console.log(`🚀 Chạy parallel với ${concurrentBrowsers} browsers cùng lúc\n`);
+      console.log(`ℹ️  Import mode: Không dùng profile (fresh browsers)\n`);
 
       // Process accounts in batches
       for (let i = 0; i < accountsToProcess.length; i += concurrentBrowsers) {
@@ -288,7 +345,8 @@ class VerifyAuthenticatorController {
         
         const batchResults = await Promise.all(
           batch.map(account => {
-            return setupSingleAccountWithBrowser(account);
+            // Pass useProfile=false for import mode
+            return setupSingleAccountWithBrowser(account, { useProfile: false });
           })
         );
         
@@ -383,8 +441,8 @@ class VerifyAuthenticatorController {
       console.log(`📤 Account data to process:`);
       console.log(`   channel_name: "${accountData.channel_name}"`);
 
-      // Process with existing function
-      const result = await setupSingleAccountWithBrowser(accountData);
+      // Process with existing function (retry mode uses profile)
+      const result = await setupSingleAccountWithBrowser(accountData, { useProfile: true });
 
       // Refetch account from database to get latest status
       const updatedAccount = await AccountYoutube.findByPk(id);
@@ -433,7 +491,7 @@ class VerifyAuthenticatorController {
 }
 
 // Setup single account with its own browser instance
-async function setupSingleAccountWithBrowser(account) {
+async function setupSingleAccountWithBrowser(account, options = {}) {
   let browser = null;
   
   try {
@@ -442,18 +500,72 @@ async function setupSingleAccountWithBrowser(account) {
     // Use HEADLESS_AUTHENTICATOR for authenticator setup
     const headless = process.env.HEADLESS_AUTHENTICATOR === 'true';
     
-    // ❌ DO NOT use profile for import/verify - always start fresh
-    // Launch browser WITHOUT profile to ensure clean state
-    browser = await browserService.launchBrowser(headless, null); // Pass null to skip profile
+    // Check if should use profile (default: false for import, true for retry)
+    const useProfile = options.useProfile === true;
     
-    const result = await setupSingleAccount(browser, account, { 
-      profileEmail: null  // Explicitly no profile
-    });
+    if (useProfile) {
+      // ✅ Retry mode: Use profile for session reuse
+      const profileEmail = account.email;
+      console.log(`📂 Using profile for: ${profileEmail} (retry mode)`);
+      
+      const launchResult = await browserService.launchBrowser(
+        headless, 
+        profileEmail,
+        3,           // retries
+        true         // reuseIfOpen - reuse browser and open new tab if already running
+      );
+      
+      browser = launchResult.browser;
+      const page = launchResult.page;
+      const isNewBrowser = launchResult.isNewBrowser;
+      
+      if (isNewBrowser) {
+        console.log(`🆕 Launched new browser for [${account.email}]`);
+      } else {
+        console.log(`♻️  Reusing existing browser, opened new tab for [${account.email}]`);
+      }
+      
+      const result = await setupSingleAccount(browser, account, { 
+        profileEmail: profileEmail  // Pass profile email
+      });
+      
+      // Only close browser if it was newly created
+      // If reused, just close the page/tab
+      if (isNewBrowser) {
+        await browser.close();
+        console.log(`✅ [${account.email}] Browser closed`);
+      } else {
+        await page.close();
+        console.log(`✅ [${account.email}] Tab closed (browser still running)`);
+      }
+      
+      return result;
+      
+    } else {
+      // ✅ Import mode: Fresh browser without profile
+      console.log(`🆕 Fresh browser (no profile) for [${account.email}]`);
+      
+      const launchResult = await browserService.launchBrowser(
+        headless, 
+        null,        // No profile
+        3,           // retries
+        false        // Don't reuse
+      );
+      
+      browser = launchResult.browser;
+      const page = launchResult.page;
+      
+      const result = await setupSingleAccount(browser, account, { 
+        profileEmail: null  // No profile
+      });
+      
+      // Always close browser in import mode
+      await browser.close();
+      console.log(`✅ [${account.email}] Browser closed`);
+      
+      return result;
+    }
     
-    await browser.close();
-    console.log(`✅ [${account.email}] Browser closed`);
-    
-    return result;
   } catch (error) {
     console.error(`❌ [${account.email}] Error:`, error.message);
     
@@ -479,10 +591,29 @@ async function setupSingleAccount(browser, account, options = {}) {
   const page = await browserService.createPage(browser);
   
   try {
-    // Always clear session for import/verify - start fresh
-    const usingProfile = false; // Never use profile for import/verify
-    console.log(`🆕 Starting fresh - clearing any existing session`);
-    await browserService.clearSession(page);
+    // Check if using profile (retry mode)
+    const usingProfile = options.profileEmail ? true : false;
+    
+    let isSessionValid = false;
+    
+    if (usingProfile) {
+      console.log(`♻️  Using profile session for ${options.profileEmail}`);
+      
+      // Check if session is still valid
+      console.log('🔍 Checking if session is still valid...');
+      isSessionValid = await googleAuthService.isLoggedIn(page);
+      
+      if (isSessionValid) {
+        console.log('✅ Session is valid, will skip login');
+      } else {
+        console.log('⚠️  Session expired or invalid, will need to login again');
+        console.log('🧹 Clearing expired session...');
+        await browserService.clearSession(page);
+      }
+    } else {
+      console.log(`🆕 Starting fresh - clearing any existing session`);
+      await browserService.clearSession(page);
+    }
 
     // Check if account already has authenticator
     const existingAccount = await AccountYoutube.findOne({
@@ -493,21 +624,118 @@ async function setupSingleAccount(browser, account, options = {}) {
     let totp = null;
     let skipAuth = false;
 
-    // If already has authenticator, skip 2FA setup
-    if (existingAccount && existingAccount.is_authenticator === true && secretKey) {
-      console.log('\n✅ Account đã có Authenticator, skip setup 2FA');
+    // Check if DB already has authenticator code
+    const hasAuthenticatorCode = existingAccount && existingAccount.code_authenticators;
+    
+    // If already has authenticator_code BUT is_authenticator is FALSE
+    // => Only try to enable 2FA, don't generate/change code
+    if (hasAuthenticatorCode && !existingAccount.is_authenticator) {
+      console.log('\n⚠️  Account có authenticator_code nhưng is_authenticator=false');
+      console.log('🔄 Sẽ chỉ thử enable 2FA, KHÔNG generate/change code');
+      secretKey = existingAccount.code_authenticators;
+      console.log(`🔑 Dùng secret key có sẵn: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)}`);
+      
+      // Login if needed
+      if (isSessionValid) {
+        console.log('✅ Đã login sẵn, skip login step');
+      } else {
+        console.log('🔐 Đang login...');
+        await googleAuthService.login(page, account.email, account.password);
+      }
+      
+      console.log('🔍 Navigate đến 2FA settings...');
+      await googleAuthService.navigateTo2FASettings(page);
+      
+      // Try to find and click "Turn on 2-Step Verification" button
+      console.log('🔍 Tìm và click "Turn on 2-Step Verification"...');
+      const clickedTurnOn2Step = await authenticatorService.clickTurnOn2StepButton(page);
+      
+      if (!clickedTurnOn2Step) {
+        console.log('❌ Không tìm thấy "Turn on 2-Step Verification" button');
+        
+        // Check if Google is asking for phone number
+        const hasPhonePopup = await authenticatorService.detectPhoneNumberPopup(page);
+        
+        if (hasPhonePopup) {
+          console.log('📱 Google đang yêu cầu thêm số điện thoại!');
+          console.log('🔄 Sẽ thử skip phone popup...');
+          
+          // Try to skip the phone popup
+          const skipped = await authenticatorService.skipPhoneNumberPopup(page);
+          
+          if (!skipped) {
+            console.log('⚠️  Không thể skip phone popup');
+            console.log('📱 Bạn có thể cần thêm số điện thoại thủ công, logout và retry lại');
+            throw new Error('Google requires phone number to enable 2FA. Please add a phone number manually, logout, and retry.');
+          }
+          
+          // If skip succeeded, retry clicking "Turn on 2-Step"
+          console.log('✅ Đã skip phone popup, đang retry "Turn on 2-Step" button...');
+          await new Promise(r => setTimeout(r, 3000));
+          
+          const clickedTurnOn2StepRetry = await authenticatorService.clickTurnOn2StepButton(page);
+          if (!clickedTurnOn2StepRetry) {
+            console.log('❌ Vẫn không tìm thấy "Turn on 2-Step Verification" button sau khi skip');
+            throw new Error('Could not find "Turn on 2-Step Verification" button after skipping phone popup. Please retry later.');
+          }
+          
+          console.log('✅ Đã click "Turn on 2-Step Verification" sau khi skip phone popup!');
+        } else {
+          console.log('⚠️  KHÔNG set is_authenticator=true, user có thể retry sau');
+          throw new Error('Could not find "Turn on 2-Step Verification" button. Authenticator code is saved but 2FA is not enabled yet. Please retry later.');
+        }
+      }
+      
+      console.log('✅ Đã click "Turn on 2-Step Verification"');
+      
+      // Click "Done" button
+      const clickedDone = await authenticatorService.clickDoneButton(page);
+      if (!clickedDone) {
+        console.log('⚠️  Could not find "Done" button, continuing...');
+      }
+      
+      console.log('🎉 Đã bật 2-Step Verification!');
+      
+      // NOW we can set is_authenticator to true
+      await AccountYoutube.update(
+        { 
+          is_authenticator: true,
+          last_login_at: new Date()
+        },
+        { where: { email: account.email } }
+      );
+      
+      console.log('💾 Đã set is_authenticator=true');
+      skipAuth = true;
+      
+    } else if (existingAccount && existingAccount.is_authenticator === true && secretKey) {
+      // Already has 2FA enabled, skip setup
+      console.log('\n✅ Account đã có Authenticator enabled (is_authenticator=true), skip setup 2FA');
       console.log(`🔑 Secret key: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)}`);
       skipAuth = true;
       
-      // Login fresh (no profile)
-      console.log('🔐 Đang login fresh (no cached session)...');
-      await googleAuthService.login(page, account.email, account.password);
-      console.log('✅ Login thành công, sẵn sàng kiểm tra channel');
+      // Login if needed
+      if (isSessionValid) {
+        console.log('✅ Đã login sẵn, skip login step');
+      } else {
+        console.log('🔐 Đang login...');
+        await googleAuthService.login(page, account.email, account.password);
+      }
+      
+      console.log('✅ Login success, ready to check channel');
       
     } else {
-      // Setup 2FA flow
-      console.log('🔐 Đang setup 2FA...');
-      await googleAuthService.login(page, account.email, account.password);
+      // Setup 2FA from scratch (generate new code)
+      console.log('🔐 Đang setup 2FA từ đầu (generate new authenticator code)...');
+      
+      // Login if needed
+      if (isSessionValid) {
+        console.log('✅ Đã login sẵn, skip login step');
+      } else {
+        console.log('🔐 Đang login...');
+        await googleAuthService.login(page, account.email, account.password);
+      }
+      
       await googleAuthService.navigateTo2FASettings(page);
 
       const clickedAuth = await authenticatorService.clickAuthenticatorLink(page);
@@ -549,27 +777,76 @@ async function setupSingleAccount(browser, account, options = {}) {
 
       console.log('🎉 Verify OTP thành công!');
 
-      // Click "Turn on" link
-      const clickedTurnOn = await authenticatorService.clickTurnOnLink(page);
-      if (!clickedTurnOn) {
-        console.log('⚠️  Could not find "Turn on" link, continuing...');
+      // Step 1: Click "Turn on" link first (to close popup and show the main button)
+      console.log('🔍 Step 1: Click "Turn on" link để tắt popup...');
+      const clickedTurnOnLink = await authenticatorService.clickTurnOnLink(page);
+      if (!clickedTurnOnLink) {
+        console.log('⚠️  Could not find "Turn on" link, continuing anyway...');
+      } else {
+        console.log('✅ Đã click "Turn on" link');
       }
 
-      // Click "Turn on 2-Step Verification" button
+      // Step 2: Reload page to ensure clean state
+      console.log('� Step 2: Reload page để đảm bảo state sạch...');
+      await page.reload({ waitUntil: 'load' });
+      console.log('✅ Page đã reload');
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Step 3: Click "Turn on 2-Step Verification" button
+      console.log('� Step 3: Click "Turn on 2-Step Verification" button...');
       const clickedTurnOn2Step = await authenticatorService.clickTurnOn2StepButton(page);
+      
       if (!clickedTurnOn2Step) {
-        console.log('⚠️  Could not find "Turn on 2-Step Verification" button, continuing...');
-      } else {
-        // Click "Done" button after turning on 2-Step Verification
-        const clickedDone = await authenticatorService.clickDoneButton(page);
-        if (!clickedDone) {
-          console.log('⚠️  Could not find "Done" button, continuing...');
+        console.log('❌ Không tìm thấy "Turn on 2-Step Verification" button');
+        console.log('💡 Thử reload và click lại lần nữa...');
+        
+        // Retry with reload
+        await page.reload({ waitUntil: 'load' });
+        await new Promise(r => setTimeout(r, 3000));
+        
+        const clickedRetry = await authenticatorService.clickTurnOn2StepButton(page);
+        
+        if (!clickedRetry) {
+          console.log('❌ Vẫn không tìm thấy button sau retry');
+          
+          // Save code but NOT set is_authenticator to true
+          const [updatedCount] = await AccountYoutube.update(
+            { 
+              code_authenticators: secretKey,
+              channel_name: account.channel_name,
+              is_authenticator: false,
+              last_login_at: new Date()
+            },
+            { where: { email: account.email } }
+          );
+
+          if (updatedCount === 0) {
+            await AccountYoutube.create({
+              email: account.email,
+              password: account.password,
+              code_authenticators: secretKey,
+              channel_name: account.channel_name,
+              is_authenticator: false,
+              last_login_at: new Date()
+            });
+          }
+
+          console.log('💾 Đã lưu code_authenticators (is_authenticator=false)');
+          throw new Error('Could not find "Turn on 2-Step Verification" button. Authenticator code is saved. Please retry later.');
         }
+      }
+      
+      console.log('✅ Đã click "Turn on 2-Step Verification"');
+      
+      // Click "Done" button after turning on 2-Step Verification
+      const clickedDone = await authenticatorService.clickDoneButton(page);
+      if (!clickedDone) {
+        console.log('⚠️  Could not find "Done" button, continuing...');
       }
 
       console.log('🎉 Đã bật 2-Step Verification!');
 
-      // Save authenticator to database
+      // NOW we can save and set is_authenticator to true
       const [updatedCount] = await AccountYoutube.update(
         { 
           code_authenticators: secretKey,
@@ -592,7 +869,7 @@ async function setupSingleAccount(browser, account, options = {}) {
         });
       }
 
-      console.log('💾 Đã lưu Authenticator vào database');
+      console.log('💾 Đã lưu Authenticator vào database với is_authenticator=true');
       
       // Verify the update was successful
       const verifyAccount = await AccountYoutube.findOne({ where: { email: account.email } });
@@ -600,112 +877,106 @@ async function setupSingleAccount(browser, account, options = {}) {
       console.log(`✅ Verified code_authenticators: ${verifyAccount.code_authenticators ? 'SET' : 'NULL'}`);
     }
 
-    // Check if need to create YouTube channel
-    console.log('\n🔍 Checking channel status...');
+    // ==================== STEP 2: CREATE CHANNEL ====================
+    console.log('\n🔍 Step 2: Checking channel status...');
     const accountAfterAuth = await AccountYoutube.findOne({
       where: { email: account.email }
     });
 
     console.log(`   is_authenticator: ${accountAfterAuth.is_authenticator} (type: ${typeof accountAfterAuth.is_authenticator})`);
     console.log(`   is_create_channel: ${accountAfterAuth.is_create_channel} (type: ${typeof accountAfterAuth.is_create_channel})`);
+    console.log(`   is_upload_avatar: ${accountAfterAuth.is_upload_avatar} (type: ${typeof accountAfterAuth.is_upload_avatar})`);
     console.log(`   channel_link: ${accountAfterAuth.channel_link || 'null'}`);
 
     let channelInfo = { name: '', link: '' };
     let avatarUploaded = false;
     let avatarName = '';
 
-    // Skip channel creation AND avatar upload if is_create_channel is already true
-    // Check both true and 1 (in case of DB type inconsistency)
-    if (accountAfterAuth.is_create_channel === true || accountAfterAuth.is_create_channel === 1) {
-      console.log('✅ Account đã có channel (is_create_channel=true), skip tạo channel và upload avatar');
-      channelInfo.link = accountAfterAuth.channel_link;
-      channelInfo.name = accountAfterAuth.channel_name;
-      
-      // DON'T logout - preserve session/cookies
-      // await googleAuthService.logout(page);
-      console.log('✅ Giữ session (không logout để preserve cookies)');
-      
-      await page.close();
-
-      return {
-        email: account.email,
-        password: account.password,
-        channel_name: account.channel_name,
-        success: true,
-        secretKey: secretKey,
-        otpCode: totp,
-        skippedAuth: skipAuth,
-        channelCreated: false, // Already existed
-        channelLink: channelInfo.link,
-        avatarUploaded: false, // Skipped
-        avatar: '',
-        skippedChannel: true // Flag to indicate we skipped channel creation
-      };
-    }
-
     // Create channel if not exists
     if (!accountAfterAuth.is_create_channel || !accountAfterAuth.channel_link) {
-      try {
-        console.log('\n📺 Đang tạo YouTube channel...');
+      // Double check - if CSV provided channel_link, we should trust it and skip creation
+      if (accountAfterAuth.channel_link && accountAfterAuth.channel_link.startsWith('http')) {
+        console.log('✅ Step 2: CSV provided channel_link, marking as done and skipping creation');
+        console.log(`   channel_link: ${accountAfterAuth.channel_link}`);
         
-        const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
-        console.log(`📝 Channel name từ DB: "${accountAfterAuth.channel_name}"`);
-        console.log(`📝 Channel name sẽ dùng: "${channelName}"`);
+        // Update is_create_channel to true since we have the link
+        await AccountYoutube.update(
+          { is_create_channel: true },
+          { where: { email: account.email } }
+        );
         
-        const createResult = await youtubeService.createChannel(page, channelName);
-        
-        // Get channel info
-        channelInfo = await youtubeService.getChannelInfo(page);
-        console.log(`✅ Channel info:`, channelInfo);
+        channelInfo.link = accountAfterAuth.channel_link;
+        channelInfo.name = accountAfterAuth.channel_name;
+      } else {
+        // No channel_link, need to create
+        try {
+          console.log('\n📺 Step 2: Creating YouTube channel...');
+          
+          const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
+          console.log(`📝 Channel name từ DB: "${accountAfterAuth.channel_name}"`);
+          console.log(`📝 Channel name sẽ dùng: "${channelName}"`);
+          
+          const createResult = await youtubeService.createChannel(page, channelName);
+          
+          // Get channel info
+          channelInfo = await youtubeService.getChannelInfo(page);
+          console.log(`✅ Channel info:`, channelInfo);
 
-        // Use actual channel name from createResult (may be modified during retry)
-        const actualChannelName = createResult.channelName || channelInfo.name || channelName;
-        console.log(`📝 Actual channel name to save: "${actualChannelName}"`);
+          // Use actual channel name from createResult (may be modified during retry)
+          const actualChannelName = createResult.channelName || channelInfo.name || channelName;
+          console.log(`📝 Actual channel name to save: "${actualChannelName}"`);
 
-        // Update channel info to database
-        const channelUpdateData = {
-          channel_name: actualChannelName, // Use actual name (may have been modified)
-          is_create_channel: true
-        };
-        
-        if (channelInfo.link && channelInfo.link.startsWith('http')) {
-          channelUpdateData.channel_link = channelInfo.link;
+          // Update channel info to database
+          const channelUpdateData = {
+            channel_name: actualChannelName, // Use actual name (may have been modified)
+            is_create_channel: true
+          };
+          
+          if (channelInfo.link && channelInfo.link.startsWith('http')) {
+            channelUpdateData.channel_link = channelInfo.link;
+          }
+
+          await AccountYoutube.update(channelUpdateData, { where: { email: account.email } });
+          console.log('💾 Đã lưu thông tin channel vào database');
+
+        } catch (channelError) {
+          console.error('❌ Lỗi tạo channel:', channelError.message);
+          // Don't update anything to DB if channel creation failed
+          // Throw error to mark this account as failed
+          throw new Error(`Failed to create channel: ${channelError.message}`);
         }
-
-        await AccountYoutube.update(channelUpdateData, { where: { email: account.email } });
-        console.log('💾 Đã lưu thông tin channel vào database');
-
-      } catch (channelError) {
-        console.error('❌ Lỗi tạo channel:', channelError.message);
-        // Don't update anything to DB if channel creation failed
-        // Throw error to mark this account as failed
-        throw new Error(`Failed to create channel: ${channelError.message}`);
       }
     } else {
-      console.log('✅ Account đã có channel, skip tạo channel');
+      console.log('✅ Step 2: Account đã có channel, skip tạo channel');
       channelInfo.link = accountAfterAuth.channel_link;
       channelInfo.name = accountAfterAuth.channel_name;
     }
 
+    // ==================== STEP 3: UPLOAD AVATAR ====================
+    // Refresh account data to get latest channel info
+    const accountBeforeAvatar = await AccountYoutube.findOne({
+      where: { email: account.email }
+    });
+
     // Upload avatar if channel exists and not yet uploaded
-    if (channelInfo.link && !accountAfterAuth.is_upload_avatar) {
+    if (accountBeforeAvatar.channel_link && !accountBeforeAvatar.is_upload_avatar) {
       try {
-        console.log('\n🖼️  Đang upload avatar...');
+        console.log('\n🖼️  Step 3: Uploading avatar...');
         
         const avatarsDir = path.join(__dirname, '../../avatars');
         const fs = require('fs');
         let avatarPath = null;
         
         // Check if avatar already downloaded
-        if (accountAfterAuth.image_name && fs.existsSync(path.join(avatarsDir, accountAfterAuth.image_name))) {
-          avatarPath = path.join(avatarsDir, accountAfterAuth.image_name);
-          console.log(`📸 Using downloaded avatar: ${accountAfterAuth.image_name}`);
-        } else if (accountAfterAuth.avatar_url) {
+        if (accountBeforeAvatar.image_name && fs.existsSync(path.join(avatarsDir, accountBeforeAvatar.image_name))) {
+          avatarPath = path.join(avatarsDir, accountBeforeAvatar.image_name);
+          console.log(`📸 Using downloaded avatar: ${accountBeforeAvatar.image_name}`);
+        } else if (accountBeforeAvatar.avatar_url) {
           // Download now
           console.log(`📥 Downloading avatar from Facebook...`);
           const fileName = `avatar_${account.email.split('@')[0]}_${Date.now()}`;
           avatarPath = await facebDownloader.downloadAvatar(
-            accountAfterAuth.avatar_url,
+            accountBeforeAvatar.avatar_url,
             avatarsDir,
             fileName
           );
@@ -723,36 +994,46 @@ async function setupSingleAccount(browser, account, options = {}) {
         if (avatarPath) {
           // Extract channel ID
           const { fileHelper } = require('../helpers');
-          const channelId = fileHelper.extractChannelId(channelInfo.link);
+          const channelId = fileHelper.extractChannelId(accountBeforeAvatar.channel_link);
           
           if (channelId) {
             const youtubeService = require('../services/youtube.service');
-            await youtubeService.uploadAvatar(page, channelId, avatarPath);
-            avatarUploaded = true;
-            avatarName = path.basename(avatarPath);
             
-            // Mark avatar as uploaded
-            await AccountYoutube.update(
-              { is_upload_avatar: true },
-              { where: { email: account.email } }
-            );
-            
-            console.log('✅ Đã upload avatar');
+            try {
+              await youtubeService.uploadAvatar(page, channelId, avatarPath);
+              avatarUploaded = true;
+              avatarName = path.basename(avatarPath);
+              
+              // Mark avatar as uploaded
+              await AccountYoutube.update(
+                { is_upload_avatar: true },
+                { where: { email: account.email } }
+              );
+              
+              console.log('✅ Đã upload avatar thành công');
+            } catch (uploadError) {
+              console.error('❌ Lỗi khi upload avatar:', uploadError.message);
+              console.log('⚠️  Avatar upload failed, will NOT mark as uploaded (can retry later)');
+              // Don't set avatarUploaded = true
+              // Don't update is_upload_avatar
+            }
           } else {
-            console.log('⚠️  Không thể extract channel ID');
+            console.log('⚠️  Không thể extract channel ID từ channel_link');
           }
         } else {
           console.log('ℹ️  Không có avatar để upload');
         }
       } catch (avatarError) {
-        console.error('⚠️  Lỗi upload avatar:', avatarError.message);
-        // Continue even if avatar upload fails
+        console.error('⚠️  Lỗi trong avatar step:', avatarError.message);
+        // Continue even if avatar step fails
       }
-    } else if (accountAfterAuth.is_upload_avatar) {
-      console.log('✅ Avatar đã được upload trước đó');
+    } else if (accountBeforeAvatar.is_upload_avatar) {
+      console.log('✅ Step 3: Avatar đã được upload trước đó');
+    } else {
+      console.log('ℹ️  Step 3: Skip upload avatar (chưa có channel hoặc không có avatar_url)');
     }
 
-    console.log('🎉 Setup hoàn tất!');
+    console.log('\n🎉 Setup hoàn tất!');
 
     // DON'T logout - preserve session/cookies
     // await googleAuthService.logout(page);
@@ -760,16 +1041,21 @@ async function setupSingleAccount(browser, account, options = {}) {
     
     await page.close();
 
+    // Get final account status
+    const finalAccount = await AccountYoutube.findOne({
+      where: { email: account.email }
+    });
+
     return {
       email: account.email,
       password: account.password,
-      channel_name: account.channel_name,
+      channel_name: finalAccount.channel_name,
       success: true,
       secretKey: secretKey,
       otpCode: totp,
       skippedAuth: skipAuth,
-      channelCreated: !!channelInfo.link,
-      channelLink: channelInfo.link,
+      channelCreated: !!finalAccount.channel_link,
+      channelLink: finalAccount.channel_link,
       avatarUploaded: avatarUploaded,
       avatar: avatarName
     };

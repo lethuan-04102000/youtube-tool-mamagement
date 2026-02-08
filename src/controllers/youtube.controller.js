@@ -194,10 +194,119 @@ class YoutubeController {
       });
     }
   }
+
+  async uploadAvatarSingle(req, res) {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account ID is required'
+        });
+      }
+
+      // Get account by ID
+      const account = await AccountYoutube.findByPk(id);
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account not found'
+        });
+      }
+
+      if (!account.is_create_channel || !account.channel_link) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account does not have a YouTube channel yet'
+        });
+      }
+
+      if (!account.avatar_url) {
+        return res.status(400).json({
+          success: false,
+          message: 'Account does not have avatar URL'
+        });
+      }
+
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`🖼️  UPLOAD AVATAR FOR SINGLE ACCOUNT`);
+      console.log(`📧 Email: ${account.email}`);
+      console.log(`🔗 Avatar URL: ${account.avatar_url}`);
+      console.log(`${'='.repeat(60)}\n`);
+
+      // STEP 1: Download avatar if not exists
+      const avatarsDir = path.join(__dirname, '../../avatars');
+      const fs = require('fs');
+      let imageName = account.image_name;
+
+      if (!imageName || !fs.existsSync(path.join(avatarsDir, imageName))) {
+        console.log('📥 Downloading avatar from Facebook...');
+        
+        const downloadResult = await facebDownloader.downloadAvatar(
+          account.avatar_url,
+          account.email,
+          avatarsDir
+        );
+
+        if (!downloadResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to download avatar',
+            error: downloadResult.error
+          });
+        }
+
+        imageName = downloadResult.imageName;
+        
+        // Update image_name in database
+        await AccountYoutube.update(
+          { image_name: imageName },
+          { where: { id: account.id } }
+        );
+
+        console.log(`✅ Avatar downloaded: ${imageName}`);
+      } else {
+        console.log(`✓ Avatar already exists: ${imageName}`);
+      }
+
+      // STEP 2: Upload avatar to YouTube
+      console.log('\n📤 Uploading avatar to YouTube...\n');
+
+      const result = await uploadAvatarForAccount({
+        ...account.toJSON(),
+        image_name: imageName
+      });
+
+      if (result.success) {
+        return res.json({
+          success: true,
+          message: 'Avatar uploaded successfully',
+          data: result
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Failed to upload avatar',
+          error: result.error
+        });
+      }
+
+    } catch (error) {
+      console.error('❌ Upload Avatar Single Error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
 }
 
 async function createChannelForAccount(account) {
   let browser = null;
+  let page = null;
   
   try {
     console.log(`\n🌐 [${account.email}] Launching browser...`);
@@ -205,8 +314,9 @@ async function createChannelForAccount(account) {
     // Use HEADLESS for YouTube operations
     const headless = process.env.HEADLESS === 'true';
     // Launch browser with profile (if exists) and reuse session when possible
-    browser = await browserService.launchBrowser(headless, account.email);
-    const page = await browserService.createPage(browser);
+    const launchResult = await browserService.launchBrowser(headless, account.email);
+    browser = launchResult.browser;
+    page = launchResult.page;
 
     // Check session and auto re-login if expired
     await ensureLoggedIn(page, account.email, account.password);
@@ -214,6 +324,53 @@ async function createChannelForAccount(account) {
     // Create channel
     const channelName = account.channel_name || `Channel ${account.email.split('@')[0]}`;
     const createResult = await youtubeService.createChannel(page, channelName);
+
+    // Check if phone verification is required
+    if (createResult.requiresPhoneVerification) {
+      console.log(`⚠️  [${account.email}] Phone verification required`);
+      
+      // Keep browser open for manual phone verification
+      console.log('📱 Please verify phone manually in the browser. Browser will stay open.');
+      console.log('⏳ Waiting for manual verification (60 seconds)...');
+      
+      // Wait for user to complete phone verification
+      await new Promise(r => setTimeout(r, 60000));
+      
+      // Check again if we can proceed
+      console.log('🔄 Checking if phone verification was completed...');
+      const channelInfo = await youtubeService.getChannelInfo(page);
+      
+      if (!channelInfo.link) {
+        throw new Error('Phone verification not completed. Please verify manually and try again.');
+      }
+      
+      // If channel link exists, verification was successful
+      console.log('✅ Phone verification appears successful, continuing...');
+      
+      // Update database
+      const actualChannelName = createResult.channelName || channelInfo.name || channelName;
+      const updateData = {
+        channel_name: actualChannelName,
+        is_create_channel: true,
+        channel_link: channelInfo.link
+      };
+      
+      await AccountYoutube.update(updateData, { where: { id: account.id } });
+      
+      console.log(`💾 [${account.email}] Đã lưu thông tin channel vào database`);
+      console.log(`📝 Tên channel thực tế: "${actualChannelName}"`);
+      
+      await browser.close();
+      console.log(`✅ [${account.email}] Browser closed (session saved)`);
+      
+      return {
+        email: account.email,
+        success: true,
+        channelName: actualChannelName,
+        channelLink: channelInfo.link,
+        phoneVerificationRequired: true
+      };
+    }
 
     if (!createResult.created) {
       throw new Error(createResult.message || 'Failed to create channel');
@@ -305,8 +462,9 @@ async function uploadAvatarForAccount(account) {
       // Use HEADLESS for YouTube operations
       const headless = process.env.HEADLESS === 'true';
       // Launch browser with profile to reuse session when available
-      browser = await browserService.launchBrowser(headless, account.email);
-      page = await browserService.createPage(browser);
+      const launchResult = await browserService.launchBrowser(headless, account.email);
+      browser = launchResult.browser;
+      page = launchResult.page;
     }
 
     // Check session and auto re-login if expired

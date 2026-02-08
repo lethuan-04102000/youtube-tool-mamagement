@@ -46,5 +46,13 @@ router.post('/:id/open-browser', accountsController.openBrowserWithProfile);
  */
 router.post('/:id/close-browser', accountsController.closeBrowser);
 
+/**
+ * @route   PUT /api/v1/accounts/:id/avatar-url
+ * @desc    Update avatar URL for account
+ * @body    { avatarUrl: string }
+ * @access  Public
+ */
+router.put('/:id/avatar-url', accountsController.updateAvatarUrl);
+
 module.exports = router;
 

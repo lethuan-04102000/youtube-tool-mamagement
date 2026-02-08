@@ -645,6 +645,39 @@ class AuthenticatorService {
     return clicked;
   }
 
+  /**
+   * Reload page and retry clicking "Turn on 2-Step Verification"
+   * This helps avoid phone number popup by refreshing the page state
+   */
+  async reloadPageAndRetryTurnOn(page) {
+    console.log('🔄 Reload page và retry clicking "Turn on 2-Step Verification"...');
+    
+    try {
+      // Reload the page
+      console.log('🔄 Đang reload page...');
+      await page.reload({ waitUntil: 'load' });
+      console.log('✅ Page reloaded');
+      
+      // Wait for page to stabilize
+      await new Promise(r => setTimeout(r, 3000));
+      
+      // Try to click "Turn on 2-Step Verification" again
+      console.log('🔍 Đang tìm "Turn on 2-Step Verification" button sau reload...');
+      const clicked = await this.clickTurnOn2StepButton(page);
+      
+      if (clicked) {
+        console.log('✅ Đã click "Turn on 2-Step Verification" sau reload!');
+        return true;
+      } else {
+        console.log('⚠️  Vẫn không tìm thấy button sau reload');
+        return false;
+      }
+    } catch (error) {
+      console.log('❌ Error reloading and retrying:', error.message);
+      return false;
+    }
+  }
+
   async clickDoneButton(page) {
     console.log('🔍 Đang tìm nút "Done"...');
     await new Promise(r => setTimeout(r, 2000));
@@ -730,6 +763,195 @@ class AuthenticatorService {
       console.log(`📸 Saved screenshot to: ${screenshotPath}`);
     } catch (error) {
       console.log('⚠️  Debug failed:', error.message);
+    }
+  }
+
+  /**
+   * Detect if Google is prompting for phone number
+   * Returns true if phone number popup is detected
+   */
+  async detectPhoneNumberPopup(page) {
+    console.log('🔍 Checking for phone number popup...');
+    
+    try {
+      await new Promise(r => setTimeout(r, 2000));
+      
+      const hasPhonePopup = await page.evaluate(() => {
+        // Look for text indicating phone number requirement
+        const phoneKeywords = [
+          'add a phone number',
+          'phone number',
+          'add phone',
+          'verify your phone',
+          'enter your phone',
+          'recovery phone'
+        ];
+        
+        const bodyText = document.body.textContent?.toLowerCase() || '';
+        
+        // Check if any phone-related keyword exists
+        for (const keyword of phoneKeywords) {
+          if (bodyText.includes(keyword)) {
+            return true;
+          }
+        }
+        
+        // Also check for phone input fields
+        const phoneInputs = document.querySelectorAll('input[type="tel"], input[name*="phone"], input[placeholder*="phone"]');
+        if (phoneInputs.length > 0) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      if (hasPhonePopup) {
+        console.log('📱 Detected phone number popup!');
+        await this.debugPageContent(page, `phone-popup-detected-${Date.now()}`);
+      } else {
+        console.log('✅ No phone number popup detected');
+      }
+      
+      return hasPhonePopup;
+    } catch (error) {
+      console.log('⚠️  Error detecting phone popup:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Handle phone number popup by adding a phone number
+   * Returns true if phone was added successfully
+   */
+  async handlePhoneNumberPopup(page, phoneNumber) {
+    console.log('📱 Handling phone number popup...');
+    
+    try {
+      // Wait for phone input to appear
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // Find and fill phone input
+      const phoneInputSelectors = [
+        'input[type="tel"]',
+        'input[name*="phone"]',
+        'input[placeholder*="phone"]',
+        'input[autocomplete="tel"]'
+      ];
+      
+      let phoneInputFilled = false;
+      for (const selector of phoneInputSelectors) {
+        try {
+          const phoneInput = await page.$(selector);
+          if (phoneInput) {
+            console.log(`✅ Found phone input with selector: ${selector}`);
+            await phoneInput.click();
+            await new Promise(r => setTimeout(r, 500));
+            await phoneInput.type(phoneNumber, { delay: 100 });
+            console.log('✅ Entered phone number');
+            phoneInputFilled = true;
+            break;
+          }
+        } catch (e) {
+          // Continue to next selector
+        }
+      }
+      
+      if (!phoneInputFilled) {
+        console.log('❌ Could not find phone input field');
+        return false;
+      }
+      
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // Click Next or Continue button
+      const clicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const nextBtn = buttons.find(btn => {
+          const text = btn.textContent?.trim()?.toLowerCase() || '';
+          return text === 'next' || text === 'continue' || text === 'tiếp theo' || text === 'tiếp tục';
+        });
+        
+        if (nextBtn && !nextBtn.disabled) {
+          nextBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (!clicked) {
+        console.log('⚠️  Could not find Next/Continue button');
+        return false;
+      }
+      
+      console.log('✅ Clicked Next/Continue button');
+      await new Promise(r => setTimeout(r, 3000));
+      
+      // Check if verification code is required
+      const needsVerification = await page.evaluate(() => {
+        const bodyText = document.body.textContent?.toLowerCase() || '';
+        return bodyText.includes('verification code') || 
+               bodyText.includes('enter the code') ||
+               bodyText.includes('verify');
+      });
+      
+      if (needsVerification) {
+        console.log('📱 Phone verification code may be required');
+        console.log('⚠️  You may need to manually enter the verification code');
+        // Wait longer for manual intervention
+        await new Promise(r => setTimeout(r, 30000));
+      }
+      
+      return true;
+    } catch (error) {
+      console.log('❌ Error handling phone popup:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Skip phone number popup by clicking Skip/Not now
+   * Returns true if skip was successful
+   */
+  async skipPhoneNumberPopup(page) {
+    console.log('⏭️  Attempting to skip phone number popup...');
+    
+    try {
+      await new Promise(r => setTimeout(r, 1000));
+      
+      const clicked = await page.evaluate(() => {
+        const skipKeywords = ['skip', 'not now', 'maybe later', 'bỏ qua', 'để sau'];
+        const buttons = Array.from(document.querySelectorAll('button, a, span[role="button"]'));
+        
+        const skipBtn = buttons.find(btn => {
+          const text = btn.textContent?.trim()?.toLowerCase() || '';
+          const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
+          
+          for (const keyword of skipKeywords) {
+            if (text.includes(keyword) || ariaLabel.includes(keyword)) {
+              return true;
+            }
+          }
+          return false;
+        });
+        
+        if (skipBtn) {
+          skipBtn.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (clicked) {
+        console.log('✅ Clicked skip button');
+        await new Promise(r => setTimeout(r, 3000));
+        return true;
+      } else {
+        console.log('⚠️  Could not find skip button');
+        return false;
+      }
+    } catch (error) {
+      console.log('⚠️  Error skipping phone popup:', error.message);
+      return false;
     }
   }
 }
