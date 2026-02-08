@@ -32,6 +32,11 @@ export interface Account {
   email: string;
   channelName?: string;
   channelLink?: string;
+  isAuthenticator?: boolean;
+  isCreateChannel?: boolean;
+  isUploadAvatar?: boolean;
+  avatarUrl?: string;
+  imageName?: string;
 }
 
 export interface AccountsResponse {
@@ -275,6 +280,40 @@ export const accountsAPI = {
     
     return response.json();
   },
+
+  // Upload avatar for single account
+  uploadAvatarSingle: async (accountId: number): Promise<any> => {
+    const url = buildApiUrl(`/api/v1/youtube/upload-avatar/${accountId}`);
+    const response = await fetch(url, {
+      method: 'POST',
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Upload avatar failed' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+    
+    return response.json();
+  },
+
+  // Update avatar URL for account
+  updateAvatarUrl: async (accountId: number, avatarUrl: string): Promise<any> => {
+    const url = buildApiUrl(`/api/v1/accounts/${accountId}/avatar-url`);
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ avatarUrl }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Update avatar URL failed' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+    
+    return response.json();
+  },
 };
 
 // Upload API
@@ -329,12 +368,28 @@ export const uploadAPI = {
     return request<UploadedVideosResponse>(endpoint);
   },
 
-  // Batch upload videos (max 4 videos at once)
+  // Batch upload videos (max 15 videos at once)
   batchUpload: (data: BatchUploadRequest): Promise<BatchUploadResponse> => {
     return request<BatchUploadResponse>(API_ENDPOINTS.UPLOAD.BATCH_UPLOAD, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+
+  // Batch upload files from computer (max 15 files at once)
+  batchUploadFiles: async (formData: FormData): Promise<BatchUploadResponse> => {
+    const url = buildApiUrl(API_ENDPOINTS.UPLOAD.BATCH_UPLOAD_FILES);
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Batch file upload failed' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
   },
 };
 

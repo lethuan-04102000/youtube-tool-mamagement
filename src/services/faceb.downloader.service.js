@@ -24,9 +24,9 @@ class FacebDownloaderService {
         const cookies = JSON.parse(cookiesString);
         await page.setCookie(...cookies);
         
-        // Check if cookies are still valid
-        await page.goto('https://www.facebook.com/', { waitUntil: 'networkidle2', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 2000));
+        // Check if cookies are still valid (faster with domcontentloaded)
+        await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+        await new Promise(r => setTimeout(r, 1000)); // Reduced from 2000ms
         
         const isLoggedIn = await page.evaluate(() => {
           // Check for logged-in indicators
@@ -49,28 +49,34 @@ class FacebDownloaderService {
       
       if (!fbEmail || !fbPassword) {
         console.log('⚠️  FB_EMAIL or FB_PASSWORD not set in .env, skipping login');
+        console.log('ℹ️  Public photos may still work without login');
         return false;
       }
       
       console.log(`🔐 Logging into Facebook as ${fbEmail}...`);
       
-      await page.goto('https://www.facebook.com/', { waitUntil: 'networkidle2', timeout: 30000 });
-      await new Promise(r => setTimeout(r, 2000));
+      await page.goto('https://www.facebook.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await new Promise(r => setTimeout(r, 1000)); // Reduced from 2000ms
       
-      // Enter email
-      await page.waitForSelector('input[name="email"]', { timeout: 10000 });
-      await page.type('input[name="email"]', fbEmail, { delay: 100 });
+      // Enter email (with shorter timeout)
+      const emailInput = await page.waitForSelector('input[name="email"]', { timeout: 5000 }).catch(() => null);
+      if (!emailInput) {
+        console.log('⚠️  Could not find login form, skipping Facebook login');
+        return false;
+      }
+      
+      await page.type('input[name="email"]', fbEmail, { delay: 50 }); // Faster typing
       
       // Enter password
-      await page.type('input[name="pass"]', fbPassword, { delay: 100 });
+      await page.type('input[name="pass"]', fbPassword, { delay: 50 }); // Faster typing
       
-      // Click login button
+      // Click login button (use domcontentloaded instead of networkidle2)
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
         page.click('button[name="login"]')
       ]);
       
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000)); // Keep this for login verification
       
       // Check if login successful
       const loginSuccess = await page.evaluate(() => {
@@ -102,9 +108,9 @@ class FacebDownloaderService {
    */
   async downloadAvatarInTab(page, facebookUrl, outputFolder, fileName) {
     try {
-      // Navigate to Facebook URL
-      await page.goto(facebookUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-      await new Promise(r => setTimeout(r, 2000));
+      // Navigate to Facebook URL (faster with domcontentloaded)
+      await page.goto(facebookUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 1500)); // Reduced from 2000ms
       
       // Find and extract image URL
       const imageUrl = await page.evaluate(() => {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Search, ChevronLeft, ChevronRight, ExternalLink, Upload, X, FileText, RotateCw, Download, Chrome } from 'lucide-react';
+import { RefreshCw, Search, ChevronLeft, ChevronRight, ExternalLink, Upload, X, FileText, RotateCw, Download, Chrome, Image as ImageIcon, Edit2, Check } from 'lucide-react';
 import { buildApiUrl, API_ENDPOINTS } from '@/lib/constants';
 import { accountsAPI } from '@/lib/api';
 
@@ -12,6 +12,9 @@ interface Channel {
   channelLink: string;
   isAuthenticator: boolean;
   isCreateChannel: boolean;
+  isUploadAvatar?: boolean;
+  avatarUrl?: string;
+  imageName?: string;
 }
 
 interface Pagination {
@@ -42,6 +45,13 @@ export default function ListChannelsPage() {
   
   // Upload avatars state
   const [uploadingAvatars, setUploadingAvatars] = useState(false);
+  
+  // Upload single avatar state
+  const [uploadingAvatarId, setUploadingAvatarId] = useState<number | null>(null);
+  
+  // Edit avatar URL state
+  const [editingAvatarId, setEditingAvatarId] = useState<number | null>(null);
+  const [avatarUrlInput, setAvatarUrlInput] = useState<string>('');
   
   // Pagination & Search
   const [pagination, setPagination] = useState<Pagination>({
@@ -328,6 +338,85 @@ export default function ListChannelsPage() {
     }
   };
 
+  const handleUploadAvatarSingle = async (channelId: number, email: string) => {
+    const confirmed = confirm(
+      `Upload avatar cho kênh: ${email}?\n\n` +
+      'Hệ thống sẽ:\n' +
+      '- Download avatar từ Facebook (nếu chưa có)\n' +
+      '- Mở YouTube Studio\n' +
+      '- Upload avatar lên kênh\n\n' +
+      'Tiếp tục?'
+    );
+    
+    if (!confirmed) return;
+    
+    setUploadingAvatarId(channelId);
+    
+    try {
+      const result = await accountsAPI.uploadAvatarSingle(channelId);
+      
+      if (result.success) {
+        alert(`✅ Upload avatar thành công cho ${email}`);
+        // Refresh channels list
+        fetchChannels();
+      } else {
+        throw new Error(result.message || 'Upload avatar failed');
+      }
+      
+    } catch (error: any) {
+      console.error('Upload avatar failed:', error);
+      alert(`❌ Upload avatar failed: ${error.message}`);
+    } finally {
+      setUploadingAvatarId(null);
+    }
+  };
+
+  const handleUpdateAvatarUrl = async (channelId: number, email: string) => {
+    if (!avatarUrlInput.trim()) {
+      alert('Vui lòng nhập avatar URL');
+      return;
+    }
+
+    // Validate URL
+    try {
+      new URL(avatarUrlInput);
+    } catch (e) {
+      alert('URL không hợp lệ. Vui lòng nhập URL đúng định dạng (http:// hoặc https://)');
+      return;
+    }
+
+    const confirmed = confirm(
+      `Update avatar URL cho kênh: ${email}?\n\n` +
+      `URL: ${avatarUrlInput}\n\n` +
+      'Tiếp tục?'
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      const result = await accountsAPI.updateAvatarUrl(channelId, avatarUrlInput);
+      
+      if (result.success) {
+        alert(`✅ Đã update avatar URL cho ${email}`);
+        setEditingAvatarId(null);
+        setAvatarUrlInput('');
+        // Refresh channels list
+        fetchChannels();
+      } else {
+        throw new Error(result.message || 'Update avatar URL failed');
+      }
+      
+    } catch (error: any) {
+      console.error('Update avatar URL failed:', error);
+      alert(`❌ Update failed: ${error.message}`);
+    }
+  };
+
+  const handleCancelEditAvatar = () => {
+    setEditingAvatarId(null);
+    setAvatarUrlInput('');
+  };
+
   return (
     <div className="p-6">
       {/* Compact Header */}
@@ -497,6 +586,7 @@ export default function ListChannelsPage() {
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Link</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">2FA</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Channel</th>
+                <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Avatar</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Browser</th>
                 <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Thao tác</th>
               </tr>
@@ -504,14 +594,14 @@ export default function ListChannelsPage() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                     <RefreshCw className="animate-spin mx-auto mb-2" size={20} />
                     <div className="text-sm">Đang tải kênh...</div>
                   </td>
                 </tr>
               ) : channels.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
                     {search 
                       ? 'Không tìm thấy kênh nào phù hợp.' 
                       : filterStatus !== 'all'
@@ -559,6 +649,70 @@ export default function ListChannelsPage() {
                         <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-700 text-xs font-bold">
                           ✗
                         </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {editingAvatarId === channel.id ? (
+                        // Edit mode: show input and buttons
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="text"
+                            value={avatarUrlInput}
+                            onChange={(e) => setAvatarUrlInput(e.target.value)}
+                            placeholder="https://..."
+                            className="w-32 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleUpdateAvatarUrl(channel.id, channel.email)}
+                            className="inline-flex items-center justify-center w-6 h-6 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                            title="Save"
+                          >
+                            <Check size={12} />
+                          </button>
+                          <button
+                            onClick={handleCancelEditAvatar}
+                            className="inline-flex items-center justify-center w-6 h-6 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                            title="Cancel"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        // View mode: show status and action buttons (no avatar image)
+                        <div className="flex items-center justify-center gap-1">
+                          {channel.isUploadAvatar ? (
+                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                              ✓
+                            </span>
+                          ) : channel.isCreateChannel ? (
+                            <>
+                              {channel.avatarUrl && (
+                                <button
+                                  onClick={() => handleUploadAvatarSingle(channel.id, channel.email)}
+                                  disabled={uploadingAvatarId === channel.id}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  title="Upload avatar to YouTube"
+                                >
+                                  <ImageIcon size={10} className={uploadingAvatarId === channel.id ? 'animate-pulse' : ''} />
+                                  {uploadingAvatarId === channel.id ? '...' : 'Up'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setEditingAvatarId(channel.id);
+                                  setAvatarUrlInput(channel.avatarUrl || '');
+                                }}
+                                className="inline-flex items-center justify-center w-6 h-6 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                                title="Edit avatar URL"
+                              >
+                                <Edit2 size={10} />
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-center">

@@ -262,7 +262,7 @@ class YoutubeUploadPublishService {
    * @param {object} options - { maxAttempts, waitBetweenAttempts }
    */
   async getVideoUrl(page, options = {}) {
-    const { maxAttempts = 10, waitBetweenAttempts = 1500 } = options; // Giảm attempts và thời gian chờ
+    const { maxAttempts = 15, waitBetweenAttempts = 2000 } = options; // Tăng attempts và thời gian chờ
     const maxWaitUrl = maxAttempts * waitBetweenAttempts;
     const urlStartTime = Date.now();
     let videoUrl = null;
@@ -368,17 +368,58 @@ class YoutubeUploadPublishService {
       });
 
       if (!videoUrl) {
-        if (attempt % 3 === 0) { // Log mỗi 3 attempts thay vì 5
+        if (attempt % 3 === 0) { // Log mỗi 3 attempts
           console.log(`   🔍 Attempt ${attempt}/${maxAttempts}: Still looking for video URL...`);
         }
         await new Promise(r => setTimeout(r, waitBetweenAttempts));
       } else {
-        console.log(`   ✅ Found video URL at attempt ${attempt}`);
+        console.log(`   ✅ Found video URL at attempt ${attempt}: ${videoUrl}`);
         break; // Tìm được rồi thì thoát ngay
       }
     }
 
-    // Fallback cuối: Navigate về Content page để lấy URL
+    // Fallback 1: Click vào Copy link button để force show URL
+    if (!videoUrl) {
+      console.log('⚠️ Thử click Copy link button để show URL...');
+      try {
+        await page.evaluate(() => {
+          const copyButton = document.querySelector('button[aria-label*="Copy"]') ||
+                            document.querySelector('button[title*="Copy"]') ||
+                            Array.from(document.querySelectorAll('button')).find(btn => 
+                              btn.textContent.includes('Copy') || btn.textContent.includes('copy')
+                            );
+          if (copyButton) {
+            copyButton.click();
+          }
+        });
+        
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Try to get URL from clipboard or input again
+        videoUrl = await page.evaluate(() => {
+          const shareUrlLink = document.querySelector('#share-url');
+          if (shareUrlLink && shareUrlLink.href) {
+            return shareUrlLink.href.split('?feature=')[0].split('&feature=')[0];
+          }
+          
+          const linkInput = document.querySelector('input[readonly]') ||
+                           document.querySelector('input[type="text"]');
+          if (linkInput && linkInput.value && linkInput.value.includes('youtube.com')) {
+            return linkInput.value.split('?feature=')[0].split('&feature=')[0];
+          }
+          
+          return null;
+        });
+        
+        if (videoUrl) {
+          console.log('✅ Lấy được URL sau khi click Copy button');
+        }
+      } catch (e) {
+        console.log('⚠️ Không thể click Copy button:', e.message);
+      }
+    }
+
+    // Fallback 2: Navigate về Content page để lấy URL
     if (!videoUrl) {
       console.log('⚠️ Thử navigate về Content page để lấy URL...');
       try {
@@ -403,7 +444,7 @@ class YoutubeUploadPublishService {
         });
 
         if (videoUrl) {
-          console.log('✅ Lấy được URL từ Content page');
+          console.log('✅ Lấy được URL từ Content page:', videoUrl);
         }
       } catch (e) {
         console.log('⚠️ Không thể navigate về Content page:', e.message);

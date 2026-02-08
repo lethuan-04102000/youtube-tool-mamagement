@@ -3,6 +3,118 @@ const retryService = require('./retry.service');
 
 class ChannelService {
   /**
+   * Check if phone verification popup appears
+   * @param {Page} page 
+   * @returns {Promise<{isPhoneVerification: boolean, message: string}>}
+   */
+  async checkPhoneVerificationPopup(page) {
+    try {
+      const result = await page.evaluate(() => {
+        // Check for various phone verification indicators
+        const bodyText = document.body.innerText.toLowerCase();
+        
+        // Check for phone verification keywords
+        const phoneKeywords = [
+          'verify phone',
+          'phone number',
+          'add phone',
+          'mobile number',
+          'xác minh số điện thoại',
+          'số điện thoại',
+          'thêm số điện thoại',
+          'verify your phone',
+          'confirm your phone'
+        ];
+        
+        const hasPhoneKeyword = phoneKeywords.some(keyword => bodyText.includes(keyword));
+        
+        // Check for typical phone verification elements
+        const phoneInput = document.querySelector('input[type="tel"]') || 
+                          document.querySelector('input[name*="phone"]') ||
+                          document.querySelector('input[placeholder*="phone"]');
+        
+        // Check for "Not now" or "Skip" button
+        const buttons = Array.from(document.querySelectorAll('button, a'));
+        const skipButton = buttons.find(btn => {
+          const text = btn.textContent?.toLowerCase().trim() || '';
+          return text === 'not now' || 
+                 text === 'skip' || 
+                 text === 'cancel' ||
+                 text === 'bỏ qua' ||
+                 text === 'để sau' ||
+                 text === 'không phải bây giờ';
+        });
+        
+        return {
+          isPhoneVerification: hasPhoneKeyword || phoneInput !== null,
+          hasSkipButton: skipButton !== null,
+          skipButtonText: skipButton?.textContent?.trim() || ''
+        };
+      });
+      
+      if (result.isPhoneVerification) {
+        console.log('⚠️  Phone verification popup detected!');
+        if (result.hasSkipButton) {
+          console.log(`   Found skip button: "${result.skipButtonText}"`);
+        }
+        return {
+          isPhoneVerification: true,
+          message: 'Phone verification required',
+          canSkip: result.hasSkipButton
+        };
+      }
+      
+      return { isPhoneVerification: false, message: '', canSkip: false };
+      
+    } catch (error) {
+      console.log('⚠️ Error checking phone verification:', error.message);
+      return { isPhoneVerification: false, message: '', canSkip: false };
+    }
+  }
+
+  /**
+   * Try to skip/dismiss phone verification popup
+   * @param {Page} page 
+   * @returns {Promise<boolean>}
+   */
+  async skipPhoneVerification(page) {
+    try {
+      const clicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, a'));
+        const skipButton = buttons.find(btn => {
+          const text = btn.textContent?.toLowerCase().trim() || '';
+          const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
+          return text === 'not now' || 
+                 text === 'skip' || 
+                 text === 'cancel' ||
+                 text === 'bỏ qua' ||
+                 text === 'để sau' ||
+                 text === 'không phải bây giờ' ||
+                 ariaLabel.includes('skip') ||
+                 ariaLabel.includes('cancel');
+        });
+        
+        if (skipButton) {
+          skipButton.click();
+          return true;
+        }
+        return false;
+      });
+      
+      if (clicked) {
+        console.log('✅ Clicked skip/cancel button for phone verification');
+        await new Promise(r => setTimeout(r, 2000));
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.log('❌ Error skipping phone verification:', error.message);
+      return false;
+    }
+  }
+
+  /**
    * Check if "Get advanced features" dialog appears (channel already exists)
    * @param {Page} page 
    * @returns {Promise<boolean>}
@@ -237,6 +349,38 @@ class ChannelService {
       });
       await new Promise(r => setTimeout(r, 3000));
 
+      // Check for phone verification popup first
+      console.log('🔍 Checking for phone verification popup...');
+      const phoneCheck = await this.checkPhoneVerificationPopup(page);
+      
+      if (phoneCheck.isPhoneVerification) {
+        console.log('⚠️  Phone verification popup detected!');
+        
+        if (phoneCheck.canSkip) {
+          console.log('🔄 Attempting to skip phone verification...');
+          const skipped = await this.skipPhoneVerification(page);
+          
+          if (skipped) {
+            console.log('✅ Successfully skipped phone verification');
+            await new Promise(r => setTimeout(r, 2000));
+          } else {
+            console.log('❌ Could not skip phone verification');
+            return {
+              created: false,
+              message: 'Phone verification required - cannot skip automatically. Please verify manually.',
+              requiresPhoneVerification: true
+            };
+          }
+        } else {
+          console.log('❌ Phone verification required without skip option');
+          return {
+            created: false,
+            message: 'Phone verification required - no skip option available. Please verify manually.',
+            requiresPhoneVerification: true
+          };
+        }
+      }
+
       // Check if channel already exists
       console.log('🔍 Checking if channel already exists...');
       const channelExists = await this.checkChannelExists(page);
@@ -264,6 +408,38 @@ class ChannelService {
       console.log('✅ Đã click "Create a channel"');
       await new Promise(r => setTimeout(r, 5000));
 
+      // Check for phone verification popup again (can appear after clicking create)
+      console.log('🔍 Checking for phone verification popup (after create click)...');
+      const phoneCheck2 = await this.checkPhoneVerificationPopup(page);
+      
+      if (phoneCheck2.isPhoneVerification) {
+        console.log('⚠️  Phone verification popup detected after clicking create!');
+        
+        if (phoneCheck2.canSkip) {
+          console.log('🔄 Attempting to skip phone verification...');
+          const skipped = await this.skipPhoneVerification(page);
+          
+          if (skipped) {
+            console.log('✅ Successfully skipped phone verification');
+            await new Promise(r => setTimeout(r, 2000));
+          } else {
+            console.log('❌ Could not skip phone verification');
+            return {
+              created: false,
+              message: 'Phone verification required after clicking create - cannot skip. Please verify manually.',
+              requiresPhoneVerification: true
+            };
+          }
+        } else {
+          console.log('❌ Phone verification required without skip option');
+          return {
+            created: false,
+            message: 'Phone verification required after clicking create - no skip option. Please verify manually.',
+            requiresPhoneVerification: true
+          };
+        }
+      }
+
       // Find and enter channel name
       console.log('✏️  Đang nhập tên channel...');
       const nameInput = await this.findChannelNameInput(page);
@@ -281,13 +457,35 @@ class ChannelService {
       const submitClicked = await this.clickSubmitButton(page);
       if (submitClicked) {
         console.log('✅ Đã click nút "Create channel"');
+        
+        // Wait for navigation after clicking create channel
+        try {
+          console.log('⏳ Đang đợi page navigate...');
+          await page.waitForNavigation({ 
+            waitUntil: 'networkidle2', 
+            timeout: 30000 
+          }).catch(() => {
+            console.log('⚠️ Navigation timeout (might be normal)');
+          });
+          await new Promise(r => setTimeout(r, 3000));
+        } catch (navError) {
+          console.log('⚠️ Navigation error (might be normal):', navError.message);
+          await new Promise(r => setTimeout(r, 3000));
+        }
       } else {
         console.log('⚠️  Không tìm thấy nút "Create channel"');
       }
 
-      // Check for error
+      // Check for error - use try-catch to handle destroyed context
       console.log('🔍 Checking for error messages...');
-      const errorMessage = await retryService.checkForError(page);
+      let errorMessage = null;
+      try {
+        errorMessage = await retryService.checkForError(page);
+      } catch (contextError) {
+        console.log('⚠️ Context destroyed while checking error (page navigated)');
+        // Page navigated, which is actually good - channel likely created
+        errorMessage = null;
+      }
 
       if (errorMessage) {
         console.log(`❌ Error detected: ${errorMessage}`);

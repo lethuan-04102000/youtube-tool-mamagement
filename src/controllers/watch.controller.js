@@ -194,10 +194,11 @@ class WatchController {
       const headless = process.env.HEADLESS === 'true';
       
       // Use Puppeteer Chrome with stealth plugin (better for YouTube)
-      browser = await browserService.launchBrowser(headless);
+      const launchResult = await browserService.launchBrowser(headless);
+      browser = launchResult.browser;
       
       // Create page with anti-detection
-      const page = await browserService.createPage(browser);
+      const page = launchResult.page;
 
       // Login if account is provided
       if (account) {
@@ -277,8 +278,9 @@ class WatchController {
       console.log(`🎭 Human Behavior: ${humanBehavior}\n`);
 
       const headless = process.env.HEADLESS === 'true';
-      browser = await browserService.launchBrowser(headless);
-      const page = await browserService.createPage(browser);
+      const launchResult = await browserService.launchBrowser(headless);
+      browser = launchResult.browser;
+      const page = launchResult.page;
 
       // Login
       console.log(`🔐 Logging in...`);

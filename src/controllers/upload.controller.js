@@ -232,7 +232,8 @@ class UploadController {
 
   /**
    * POST /api/v1/upload/batch-upload
-   * Upload nhiều video cùng lúc (tối đa 4 videos)
+   * Upload nhiều video cùng lúc (tối đa 15 videos)
+   * Strategy: Download all videos in parallel FIRST, then upload sequentially
    * Body: {
    *   id: number,
    *   videos: [{sourceUrl, title?, description?, visibility?, tags?, scheduleDate?}]
@@ -256,10 +257,10 @@ class UploadController {
         });
       }
 
-      if (videos.length > 4) {
+      if (videos.length > 15) {
         return res.status(400).json({
           success: false,
-          message: 'Tối đa 4 videos mỗi lần upload'
+          message: 'Tối đa 15 videos mỗi lần upload'
         });
       }
 
@@ -284,93 +285,395 @@ class UploadController {
         });
       }
 
-      console.log(`\n📤 Batch upload ${videos.length} videos cho account: ${account.email}`);
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`📤 BATCH UPLOAD - ${videos.length} VIDEOS`);
+      console.log(`📧 Account: ${account.email}`);
+      console.log(`${'='.repeat(60)}\n`);
 
-      const results = [];
-      const errors = [];
+      const VideoDownloadService = require('../services/video.download.service');
+      const youtubeUploadService = require('../services/youtube.upload.service');
 
-      // Upload từng video tuần tự (để tránh quá tải)
-      for (let i = 0; i < videos.length; i++) {
-        const video = videos[i];
-        const videoNum = i + 1;
+      // ========== PHASE 1: DOWNLOAD ALL VIDEOS IN PARALLEL ==========
+      console.log(`\n📥 PHASE 1: DOWNLOADING ${videos.length} VIDEOS IN PARALLEL...`);
+      console.log(`⏱️  Start time: ${new Date().toLocaleString()}\n`);
 
-        console.log(`\n[${videoNum}/${videos.length}] Uploading: ${video.sourceUrl}`);
+      const downloadPromises = videos.map(async (video, index) => {
+        const videoNum = index + 1;
+        console.log(`   [${videoNum}/${videos.length}] Starting download: ${video.sourceUrl}`);
 
         try {
-          const result = await youtubeUploadService.downloadAndUpload(
+          // Create separate download service instance for each video (separate email folder)
+          const downloadService = new VideoDownloadService(`${account.email}-${videoNum}`);
+          const downloadResult = await downloadService.downloadVideo(video.sourceUrl);
+
+          if (!downloadResult.success) {
+            console.log(`   ❌ [${videoNum}/${videos.length}] Download failed: ${downloadResult.message}`);
+            return {
+              index: videoNum,
+              sourceUrl: video.sourceUrl,
+              success: false,
+              phase: 'download',
+              message: downloadResult.message,
+              error: downloadResult.error,
+              videoDetails: video
+            };
+          }
+
+          console.log(`   ✅ [${videoNum}/${videos.length}] Download complete: ${downloadResult.data.filePath}`);
+
+          return {
+            index: videoNum,
+            sourceUrl: video.sourceUrl,
+            success: true,
+            phase: 'download',
+            filePath: downloadResult.data.filePath,
+            title: video.title || downloadResult.data.title,
+            description: video.description || downloadResult.data.description,
+            videoDetails: video,
+            downloadService // Keep reference to delete file later
+          };
+
+        } catch (error) {
+          console.error(`   ❌ [${videoNum}/${videos.length}] Download error:`, error.message);
+          return {
+            index: videoNum,
+            sourceUrl: video.sourceUrl,
+            success: false,
+            phase: 'download',
+            message: 'Download failed',
+            error: error.message,
+            videoDetails: video
+          };
+        }
+      });
+
+      // Wait for all downloads to complete
+      const downloadResults = await Promise.all(downloadPromises);
+
+      const downloadSuccess = downloadResults.filter(r => r.success).length;
+      const downloadFailed = downloadResults.length - downloadSuccess;
+
+      console.log(`\n📊 PHASE 1 COMPLETE:`);
+      console.log(`   ✅ Downloaded: ${downloadSuccess}/${videos.length}`);
+      console.log(`   ❌ Failed: ${downloadFailed}/${videos.length}`);
+      console.log(`   ⏱️  End time: ${new Date().toLocaleString()}\n`);
+
+      // If no downloads succeeded, return early
+      if (downloadSuccess === 0) {
+        return res.json({
+          success: false,
+          message: 'All downloads failed',
+          data: {
+            total: videos.length,
+            downloaded: 0,
+            uploaded: 0,
+            failed: videos.length,
+            results: downloadResults.map(r => ({
+              index: r.index,
+              sourceUrl: r.sourceUrl,
+              success: false,
+              message: r.message || 'Download failed',
+              error: r.error
+            }))
+          }
+        });
+      }
+
+      // ========== PHASE 2: UPLOAD ALL VIDEOS SEQUENTIALLY ==========
+      console.log(`\n📤 PHASE 2: UPLOADING ${downloadSuccess} VIDEOS SEQUENTIALLY...`);
+      console.log(`⏱️  Start time: ${new Date().toLocaleString()}\n`);
+
+      const finalResults = [];
+
+      for (const downloadResult of downloadResults) {
+        if (!downloadResult.success) {
+          // Download failed, add to final results
+          finalResults.push({
+            index: downloadResult.index,
+            sourceUrl: downloadResult.sourceUrl,
+            success: false,
+            message: downloadResult.message || 'Download failed',
+            error: downloadResult.error
+          });
+          continue;
+        }
+
+        const videoNum = downloadResult.index;
+        console.log(`\n   [${videoNum}/${videos.length}] Uploading to YouTube: ${downloadResult.filePath}`);
+
+        try {
+          // Upload video to YouTube
+          const uploadResult = await youtubeUploadService.uploadVideo(
             account.email,
-            video.sourceUrl,
+            downloadResult.filePath,
             {
-              title: video.title,
-              description: video.description,
-              visibility: video.visibility || 'public',
-              tags: video.tags,
-              scheduleDate: video.scheduleDate
+              title: downloadResult.title,
+              description: downloadResult.description,
+              visibility: downloadResult.videoDetails.visibility || 'public',
+              tags: downloadResult.videoDetails.tags,
+              scheduleDate: downloadResult.videoDetails.scheduleDate
             }
           );
 
-          results.push({
+          finalResults.push({
             index: videoNum,
-            sourceUrl: video.sourceUrl,
-            success: result.success,
-            message: result.message,
-            videoUrl: result.data?.videoUrl,
-            error: result.error
+            sourceUrl: downloadResult.sourceUrl,
+            success: uploadResult.success,
+            message: uploadResult.message,
+            videoUrl: uploadResult.data?.videoUrl,
+            error: uploadResult.error
           });
 
-          if (result.success) {
-            console.log(`✅ [${videoNum}/${videos.length}] Upload thành công`);
+          if (uploadResult.success) {
+            console.log(`   ✅ [${videoNum}/${videos.length}] Upload success: ${uploadResult.data?.videoUrl}`);
+            
+            // Delete downloaded file after successful upload
+            if (downloadResult.downloadService) {
+              const deleted = downloadResult.downloadService.deleteDownloadedFile(downloadResult.filePath);
+              if (deleted) {
+                console.log(`   🗑️  [${videoNum}/${videos.length}] Deleted local file`);
+              }
+            }
           } else {
-            console.log(`❌ [${videoNum}/${videos.length}] Upload thất bại: ${result.message}`);
-            errors.push({
-              index: videoNum,
-              sourceUrl: video.sourceUrl,
-              error: result.message
-            });
+            console.log(`   ❌ [${videoNum}/${videos.length}] Upload failed: ${uploadResult.message}`);
           }
 
-          // Delay giữa các video để tránh spam
-          if (i < videos.length - 1) {
-            console.log(`⏳ Waiting 3s before next video...`);
+          // Delay giữa các upload để tránh spam YouTube
+          if (videoNum < downloadResults.filter(r => r.success).length) {
+            console.log(`   ⏳ Waiting 3s before next upload...`);
             await new Promise(r => setTimeout(r, 3000));
           }
 
         } catch (error) {
-          console.error(`❌ [${videoNum}/${videos.length}] Error:`, error.message);
-          results.push({
+          console.error(`   ❌ [${videoNum}/${videos.length}] Upload error:`, error.message);
+          finalResults.push({
             index: videoNum,
-            sourceUrl: video.sourceUrl,
+            sourceUrl: downloadResult.sourceUrl,
             success: false,
             message: 'Upload failed',
             error: error.message
           });
-          errors.push({
-            index: videoNum,
-            sourceUrl: video.sourceUrl,
-            error: error.message
-          });
+
+          // Still delete the file even if upload failed
+          if (downloadResult.downloadService) {
+            downloadResult.downloadService.deleteDownloadedFile(downloadResult.filePath);
+          }
         }
       }
 
-      const successCount = results.filter(r => r.success).length;
-      const failCount = results.length - successCount;
+      const uploadSuccess = finalResults.filter(r => r.success).length;
+      const uploadFailed = finalResults.length - uploadSuccess;
 
-      console.log(`\n📊 Batch upload completed: ${successCount}/${videos.length} success`);
+      console.log(`\n📊 PHASE 2 COMPLETE:`);
+      console.log(`   ✅ Uploaded: ${uploadSuccess}/${videos.length}`);
+      console.log(`   ❌ Failed: ${uploadFailed}/${videos.length}`);
+      console.log(`   ⏱️  End time: ${new Date().toLocaleString()}`);
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`🎉 BATCH UPLOAD COMPLETE: ${uploadSuccess}/${videos.length} SUCCESS`);
+      console.log(`${'='.repeat(60)}\n`);
 
       return res.json({
-        success: successCount > 0,
-        message: `Uploaded ${successCount}/${videos.length} videos successfully`,
+        success: uploadSuccess > 0,
+        message: `Uploaded ${uploadSuccess}/${videos.length} videos successfully`,
         data: {
           total: videos.length,
-          success: successCount,
-          failed: failCount,
-          results
-        },
-        errors: errors.length > 0 ? errors : undefined
+          downloaded: downloadSuccess,
+          uploaded: uploadSuccess,
+          failed: uploadFailed,
+          results: finalResults,
+          summary: {
+            total: videos.length,
+            success: uploadSuccess,
+            failed: uploadFailed
+          }
+        }
       });
 
     } catch (error) {
-      console.error('❌ Batch upload controller error:', error);
+      console.error('❌ Batch upload error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /api/v1/upload/batch-upload-files
+   * Upload nhiều file video từ máy lên YouTube (tối đa 15 files)
+   * Body: FormData with fields:
+   *   - id: number (account ID)
+   *   - visibility: string (optional)
+   *   - scheduleDate: string (optional)
+   *   - video_0, video_1, ... video_N: video files
+   *   - fileCount: number
+   */
+  async batchUploadFiles(req, res) {
+    try {
+      const { id, email, visibility, scheduleDate } = req.body;
+
+      if (!id && !email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cần truyền id hoặc email của account'
+        });
+      }
+
+      // req.files is an array when using uploadVideo.array()
+      const files = req.files || [];
+
+      if (files.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Không tìm thấy file nào để upload'
+        });
+      }
+
+      if (files.length > 15) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tối đa 15 files mỗi lần upload'
+        });
+      }
+
+      // Tìm account
+      const where = id ? { id } : { email };
+      const account = await AccountYoutube.findOne({ where });
+
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy account trong database'
+        });
+      }
+
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`📤 BATCH FILE UPLOAD - ${files.length} FILES`);
+      console.log(`📧 Account: ${account.email}`);
+      console.log(`${'='.repeat(60)}\n`);
+
+      const youtubeUploadService = require('../services/youtube.upload.service');
+      const fs = require('fs');
+      
+      const finalResults = [];
+      let uploadSuccess = 0;
+      let uploadFailed = 0;
+
+      // Upload each file sequentially
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const videoNum = i + 1;
+        
+        console.log(`\n   [${videoNum}/${files.length}] Uploading file: ${file.originalname}`);
+
+        try {
+          // Get title from filename (remove extension)
+          const title = file.originalname.replace(/\.[^/.]+$/, '');
+
+          const uploadResult = await youtubeUploadService.uploadVideo(
+            account.email,
+            file.path,
+            {
+              title,
+              visibility: visibility || 'public',
+              scheduleDate: scheduleDate || undefined
+            }
+          );
+
+          finalResults.push({
+            index: videoNum,
+            sourceUrl: file.originalname,
+            success: uploadResult.success,
+            message: uploadResult.message,
+            videoUrl: uploadResult.data?.videoUrl,
+            error: uploadResult.error
+          });
+
+          if (uploadResult.success) {
+            console.log(`   ✅ [${videoNum}/${files.length}] Upload success: ${uploadResult.data?.videoUrl}`);
+            uploadSuccess++;
+          } else {
+            console.log(`   ❌ [${videoNum}/${files.length}] Upload failed: ${uploadResult.message}`);
+            uploadFailed++;
+          }
+
+          // Delete uploaded file
+          try {
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+              console.log(`   🗑️  [${videoNum}/${files.length}] Deleted local file`);
+            }
+          } catch (err) {
+            console.error(`   ⚠️  Failed to delete file: ${err.message}`);
+          }
+
+          // Delay giữa các upload
+          if (i < files.length - 1) {
+            console.log(`   ⏳ Waiting 3s before next upload...`);
+            await new Promise(r => setTimeout(r, 3000));
+          }
+
+        } catch (error) {
+          console.error(`   ❌ [${videoNum}/${files.length}] Upload error:`, error.message);
+          uploadFailed++;
+          
+          finalResults.push({
+            index: videoNum,
+            sourceUrl: file.originalname,
+            success: false,
+            message: 'Upload failed',
+            error: error.message
+          });
+
+          // Still delete the file
+          try {
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+            }
+          } catch (err) {
+            console.error(`   ⚠️  Failed to delete file: ${err.message}`);
+          }
+        }
+      }
+
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`🎉 BATCH FILE UPLOAD COMPLETE: ${uploadSuccess}/${files.length} SUCCESS`);
+      console.log(`${'='.repeat(60)}\n`);
+
+      return res.json({
+        success: uploadSuccess > 0,
+        message: `Uploaded ${uploadSuccess}/${files.length} files successfully`,
+        data: {
+          total: files.length,
+          uploaded: uploadSuccess,
+          failed: uploadFailed,
+          results: finalResults,
+          summary: {
+            total: files.length,
+            success: uploadSuccess,
+            failed: uploadFailed
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Batch file upload error:', error);
+      
+      // Clean up any uploaded files on error
+      if (req.files && Array.isArray(req.files)) {
+        const fs = require('fs');
+        req.files.forEach(file => {
+          try {
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+            }
+          } catch (err) {
+            console.error(`Failed to delete file: ${err.message}`);
+          }
+        });
+      }
+
       return res.status(500).json({
         success: false,
         message: 'Internal server error',

@@ -13,6 +13,7 @@ export const API_ENDPOINTS = {
   UPLOAD: {
     DOWNLOAD_AND_UPLOAD: '/api/v1/upload/download-and-upload',
     BATCH_UPLOAD: '/api/v1/upload/batch-upload',
+    BATCH_UPLOAD_FILES: '/api/v1/upload/batch-upload-files',
     YOUTUBE: '/api/v1/upload/youtube',
     DOWNLOAD: '/api/v1/upload/download',
     DOWNLOADS: '/api/v1/upload/downloads',

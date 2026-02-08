@@ -45,7 +45,7 @@ router.get('/downloads', uploadController.getDownloadedFiles);
 
 /**
  * @route POST /api/v1/upload/batch-upload
- * @desc Upload nhiều video (tối đa 4) từ URLs cho 1 account
+ * @desc Upload nhiều video (tối đa 15) từ URLs cho 1 account
  * @body { 
  *   id?: number, 
  *   email?: string, 
@@ -60,6 +60,18 @@ router.get('/downloads', uploadController.getDownloadedFiles);
  * }
  */
 router.post('/batch-upload', uploadController.batchUpload);
+
+/**
+ * @route POST /api/v1/upload/batch-upload-files
+ * @desc Upload nhiều file video từ máy (tối đa 15) cho 1 account
+ * @multipart form-data:
+ *   - id: number - ID của account
+ *   - visibility: string (optional) - 'public' | 'unlisted' | 'private'
+ *   - scheduleDate: string (optional) - ISO format
+ *   - video_0, video_1, ..., video_N: video files
+ *   - fileCount: number - Số lượng files
+ */
+router.post('/batch-upload-files', uploadVideo.array('video', 15), uploadController.batchUploadFiles);
 
 /**
  * @route GET /api/v1/upload/videos

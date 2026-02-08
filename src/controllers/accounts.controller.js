@@ -57,7 +57,7 @@ exports.getAccounts = async (req, res) => {
     // Query database with pagination
     const { count, rows } = await AccountYoutube.findAndCountAll({
       where: whereCondition,
-      attributes: ['id', 'email', 'channel_name', 'channel_link', 'is_authenticator', 'is_create_channel'],
+      attributes: ['id', 'email', 'channel_name', 'channel_link', 'is_authenticator', 'is_create_channel', 'is_upload_avatar', 'avatar_url', 'image_name'],
       limit: limitNum,
       offset: offset,
       // Order by creation date ascending so older records appear first
@@ -71,7 +71,10 @@ exports.getAccounts = async (req, res) => {
       channelName: account.channel_name || '',
       channelLink: account.channel_link || '',
       isAuthenticator: account.is_authenticator || false,
-      isCreateChannel: account.is_create_channel || false
+      isCreateChannel: account.is_create_channel || false,
+      isUploadAvatar: account.is_upload_avatar || false,
+      avatarUrl: account.avatar_url || '',
+      imageName: account.image_name || ''
     }));
 
     // Use helper function for response
@@ -461,4 +464,77 @@ exports.closeBrowser = async (req, res) => {
  */
 exports.getOpenBrowsersMap = () => {
   return openBrowsers;
+};
+
+/**
+ * Update avatar URL for a specific account
+ * PUT /api/v1/accounts/:id/avatar-url
+ */
+exports.updateAvatarUrl = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { avatarUrl } = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account ID is required'
+      });
+    }
+
+    if (!avatarUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Avatar URL is required'
+      });
+    }
+
+    // Validate URL format
+    try {
+      new URL(avatarUrl);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid avatar URL format'
+      });
+    }
+
+    // Find account
+    const account = await AccountYoutube.findByPk(id);
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: 'Account not found'
+      });
+    }
+
+    // Update avatar_url and reset upload status
+    await account.update({
+      avatar_url: avatarUrl,
+      is_upload_avatar: false,
+      image_name: null // Reset image name khi update URL mới
+    });
+
+    console.log(`✅ Updated avatar URL for ${account.email}: ${avatarUrl}`);
+
+    return res.json({
+      success: true,
+      message: 'Avatar URL updated successfully',
+      data: {
+        id: account.id,
+        email: account.email,
+        avatarUrl: account.avatar_url,
+        isUploadAvatar: account.is_upload_avatar
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating avatar URL:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update avatar URL',
+      error: error.message
+    });
+  }
 };

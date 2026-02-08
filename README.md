@@ -9,7 +9,7 @@ A comprehensive, production-ready YouTube automation platform with a modern web 
 - ✅ **Anonymous & Logged-in Viewing**: Support both account-based and anonymous views
 - ✅ **Auto-Comment & Auto-Like**: Random comments from library with human-like typing
 - ✅ **Auto-Subscribe**: Optional channel subscriptions during campaigns
-- ✅ **2FA Support**: Full authenticator app (TOTP) integration
+- ✅ **2FA Support**: Full authenticator app (TOTP) integration with automatic phone popup handling
 - ✅ **Proxy Rotation**: Per-tab proxy support for IP diversity
 - ✅ **Anti-Detection**: Browser fingerprinting, random delays, human behavior simulation
 - ✅ **Batch Processing**: Handle multiple accounts/sessions concurrently
@@ -30,6 +30,7 @@ A comprehensive, production-ready YouTube automation platform with a modern web 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [CSV Import Guide](#csv-import-guide)
 - [API Documentation](#api-documentation)
 - [Frontend Guide](#frontend-guide)
 - [Anti-Detection Features](#anti-detection-features)
@@ -128,11 +129,25 @@ curl -X POST http://localhost:3000/api/youtube/watch \
 
 ### Accounts CSV Format
 
+**Basic Format:**
 ```csv
 email,password,recoveryEmail
 user1@gmail.com,SecurePass123!,recovery1@gmail.com
 user2@gmail.com,SecurePass456!,recovery2@gmail.com
 ```
+
+**Advanced Format (with 2FA and status tracking):**
+```csv
+email,password,channel_name,channel_link,avatar_url,code_authenticators,is_authenticator,is_create_channel,is_upload_avatar
+user1@gmail.com,pass123,My Channel,https://youtube.com/channel/UC123,https://example.com/avatar.jpg,JBSWY3DPEHPK3PXP,true,true,false
+user2@gmail.com,pass456,Tech Channel,,https://example.com/avatar2.jpg,JBSWY3DPEHPK3PXQ,true,false,false
+```
+
+See [CSV_IMPORT_GUIDE.md](./CSV_IMPORT_GUIDE.md) for complete CSV import documentation, including:
+- All supported fields and formats
+- Importing accounts with existing 2FA/channels
+- Resume automation from partial completion
+- Backup/restore workflows
 
 ### Comments Library (`comments.json`)
 
@@ -153,6 +168,63 @@ http://username:password@proxy1.example.com:8080
 http://username:password@proxy2.example.com:8080
 socks5://proxy3.example.com:1080
 ```
+
+## 📥 CSV Import Guide
+
+The system supports advanced CSV import/export for complete account management, including importing accounts with existing 2FA, channels, and tracking automation progress.
+
+### Quick Examples
+
+**Import new accounts:**
+```csv
+email,password
+user1@gmail.com,password123
+user2@gmail.com,password456
+```
+
+**Import accounts with 2FA already enabled:**
+```csv
+email,password,code_authenticators,is_authenticator
+user@gmail.com,pass123,JBSWY3DPEHPK3PXP,true
+```
+
+**Import accounts that only need avatar upload:**
+```csv
+email,password,channel_name,channel_link,avatar_url,is_authenticator,is_create_channel,is_upload_avatar,code_authenticators
+user@gmail.com,pass,My Channel,https://youtube.com/channel/UC123,https://fb.com/avatar.jpg,true,true,false,JBSWY3DPEHPK3PXP
+```
+
+### Supported CSV Fields
+
+| Field | Description | Required |
+|-------|-------------|----------|
+| `email` | Account email | ✅ Yes |
+| `password` | Account password | ✅ Yes |
+| `channel_name` | YouTube channel name | ❌ No |
+| `channel_link` | YouTube channel URL | ❌ No |
+| `avatar_url` | Avatar image URL | ❌ No |
+| `code_authenticators` | 2FA secret key (base32) | ❌ No |
+| `is_authenticator` | 2FA enabled flag (true/false/1/0) | ❌ No |
+| `is_create_channel` | Channel created flag | ❌ No |
+| `is_upload_avatar` | Avatar uploaded flag | ❌ No |
+| `recovery_email` | Recovery email address | ❌ No |
+
+### Key Features
+
+✅ **Import accounts at any automation stage** - Skip completed steps
+✅ **Smart merging** - Only updates missing fields, preserves existing data
+✅ **Multiple boolean formats** - Accepts true/false, 1/0, yes/no
+✅ **Backup/restore** - Export and re-import complete account state
+✅ **Resume automation** - Continue from where it stopped
+
+### Common Use Cases
+
+1. **Import external Google accounts with 2FA** - Set `code_authenticators` and `is_authenticator=true`
+2. **Resume failed automation** - Export accounts, mark completed steps, re-import
+3. **Bulk avatar update** - Import CSV with just email and `avatar_url` fields
+4. **Complete migration** - Export all accounts, migrate to new system, re-import
+
+For complete documentation including examples, troubleshooting, and advanced scenarios, see **[CSV_IMPORT_GUIDE.md](./CSV_IMPORT_GUIDE.md)**
 
 ## 📚 API Documentation
 
@@ -357,6 +429,11 @@ python3 --version
 - Run the 2FA setup endpoint
 - Ensure authenticator codes are valid
 
+**Google asks for phone number during 2FA setup**
+- The system automatically detects and tries to skip phone number prompts
+- If it cannot skip, add a phone number manually and retry
+- See [PHONE_NUMBER_POPUP_HANDLING.md](./PHONE_NUMBER_POPUP_HANDLING.md) for details
+
 ### Performance Tips
 
 1. **Limit Concurrent Browsers**: 3-5 recommended for optimal performance
@@ -424,6 +501,7 @@ The system includes comprehensive error handling:
 
 ## 📖 Additional Documentation
 
+- [CSV_IMPORT_GUIDE.md](./CSV_IMPORT_GUIDE.md) - **Complete CSV import/export guide**
 - [ANTI_DETECTION_GUIDE.md](./ANTI_DETECTION_GUIDE.md) - Detailed anti-detection strategies
 - [PROXY_SETUP.md](./PROXY_SETUP.md) - Proxy configuration guide
 - [COMMENT_LIKE_FEATURE.md](./COMMENT_LIKE_FEATURE.md) - Comment/like feature details

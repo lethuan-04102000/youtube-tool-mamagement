@@ -15,7 +15,16 @@ class AvatarService {
       console.log(`🖼️  Đang upload avatar cho channel: ${channelId}`);
 
       // Navigate to channel editing page
-      const editUrl = `https://studio.youtube.com/channel/${channelId}/editing`;
+      // Support both channel ID (UCxxxx) and handle (@ChannelName) formats
+      let editUrl;
+      if (channelId.startsWith('@')) {
+        // For handles, use the handle directly in the URL
+        editUrl = `https://studio.youtube.com/channel/${channelId}/editing`;
+      } else {
+        // For channel IDs, use standard format
+        editUrl = `https://studio.youtube.com/channel/${channelId}/editing`;
+      }
+      
       await page.goto(editUrl, {
         waitUntil: 'networkidle2',
         timeout: 30000

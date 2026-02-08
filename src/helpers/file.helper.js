@@ -62,15 +62,29 @@ class FileHelper {
   }
 
   /**
-   * Extract channel ID from YouTube channel URL
+   * Extract channel ID or handle from YouTube channel URL
+   * Supports both formats:
+   * - https://www.youtube.com/channel/UC... (returns channel ID)
+   * - https://www.youtube.com/@ChannelHandle (returns @handle)
    * @param {string} channelUrl - YouTube channel URL
-   * @returns {string|null} - Channel ID or null
+   * @returns {string|null} - Channel ID, @handle, or null
    */
   extractChannelId(channelUrl) {
     if (!channelUrl) return null;
     
-    const match = channelUrl.match(/channel\/([^\/\?]+)/);
-    return match ? match[1] : null;
+    // Try to match /channel/CHANNEL_ID format
+    const channelMatch = channelUrl.match(/channel\/([^\/\?]+)/);
+    if (channelMatch) {
+      return channelMatch[1];
+    }
+    
+    // Try to match /@handle format
+    const handleMatch = channelUrl.match(/\/@([^\/\?]+)/);
+    if (handleMatch) {
+      return `@${handleMatch[1]}`;
+    }
+    
+    return null;
   }
 }
 
