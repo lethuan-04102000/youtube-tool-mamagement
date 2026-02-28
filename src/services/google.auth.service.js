@@ -7,10 +7,12 @@ class GoogleAuthService {
     try {
       console.log(`🔐 Đang đăng nhập: ${email}`);
 
-      await page.goto('https://accounts.google.com/signin', { 
-        waitUntil: 'networkidle2',
-        timeout: 60000 
-      });
+      // Thay vì dùng page.goto, nhập URL vào thanh địa chỉ và nhấn Enter
+      const targetUrl = 'https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den%26next%3Dhttps%253A%252F%252Fstudio.youtube.com%252F%26feature%3Dredirect_login&dsh=S788935973%3A1772281503951407&hl=en&ifkv=ASfE1-p0y7tRHUQJOQeCAAHJ5IUJ6UaHDkZ1YOtfn3h9eNtdiw_MAKJABUlSLn5Uo94pI7l9TEdL&passive=true&service=youtube&uilel=3&flowName=GlifWebSignIn&flowEntry=ServiceLogin';
+      await page.evaluate((url) => {
+        window.location.href = url;
+      }, targetUrl);
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
       
       await new Promise(r => setTimeout(r, 2000));
       
