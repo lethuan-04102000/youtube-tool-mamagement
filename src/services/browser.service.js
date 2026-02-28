@@ -37,29 +37,57 @@ class BrowserService {
 
   /**
    * Launch browser with optional profile for email
-   * OR reuse existing browser and open new tab
+   * OR reuse existing browser and ALWAYS use first tab (to avoid Google detection)
    * @param {boolean|null} headless - Headless mode
    * @param {string|null} email - Email to load profile for (null = no profile)
    * @param {number} retries - Number of retry attempts
-   * @param {boolean} reuseIfOpen - If true, reuse existing browser (open new tab instead of new browser)
+   * @param {boolean} reuseIfOpen - If true, reuse existing browser (use first tab instead of new browser)
    * @returns {Promise<{browser: Browser, page: Page, isNewBrowser: boolean}>}
    */
   async launchBrowser(headless = null, email = null, retries = 3, reuseIfOpen = true) {
     // Check if browser already open for this email and should reuse
     if (reuseIfOpen && email) {
       const isActive = await this.isBrowserActive(email);
-      
       if (isActive) {
-        console.log(`🔄 Browser already open for [${email}], opening new tab...`);
+        console.log(`🔄 Browser already open for [${email}], reusing first tab...`);
         const browserInfo = this.activeBrowsers.get(email);
         const page = await this.createPage(browserInfo.browser);
-        
-        // Track new page
         browserInfo.pages.push(page);
+        
+        // ALWAYS use the first tab to avoid Google detection issues
+        // New tabs created by browser.newPage() don't inherit all anti-detection measures
+        const pages = await browserInfo.browser.pages();
+        
+        if (pages.length === 0) {
+          console.log('⚠️ No pages found, creating first page...');
+          const page = await this.createPage(browserInfo.browser);
+          browserInfo.pages = [page];
+          return {
+            browser: browserInfo.browser,
+            page: page,
+            isNewBrowser: false
+          };
+        }
+        
+        // Use the FIRST tab (index 0) - this is the most important tab
+        const firstTab = pages[0];
+        console.log(`✅ Reusing FIRST tab (${pages.length} tabs total)`);
+        
+        // Close extra tabs to keep things clean (optional, but recommended)
+        if (pages.length > 1) {
+          console.log(`🧹 Closing ${pages.length - 1} extra tabs...`);
+          for (let i = 1; i < pages.length; i++) {
+            try {
+              await pages[i].close();
+            } catch (err) {
+              // Ignore if tab already closed
+            }
+          }
+        }
         
         return {
           browser: browserInfo.browser,
-          page: page,
+          page: firstTab,
           isNewBrowser: false
         };
       }
@@ -81,53 +109,28 @@ class BrowserService {
             '--disable-setuid-sandbox',
             '--disable-blink-features=AutomationControlled',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
             '--window-size=1400,1200',
             '--disable-features=TranslateUI',
-            '--disable-background-downloads-warning',
             '--no-first-run',
             '--no-default-browser-check',
-            '--disable-popup-blocking',
             '--disable-infobars',
+            // ===== CRITICAL: Remove automation flags =====
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials',
             '--disable-features=ChromeWhatsNewUI',
-            // ===== THÊM CÁC FLAG MỚI ĐỂ GIỐNG NGƯỜI DÙNG THẬT HƠN =====
-            '--disable-web-security', // Tắt security để tránh CORS issues
-            '--disable-features=IsolateOrigins,site-per-process', // Tắt site isolation
-            '--allow-running-insecure-content',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-background-timer-throttling',
-            '--disable-ipc-flooding-protection',
-            '--disable-hang-monitor',
-            '--disable-prompt-on-repost',
-            '--disable-domain-reliability',
-            '--disable-component-extensions-with-background-pages',
-            // Language và timezone
+            // Language
             '--lang=en-US,en',
-            // WebGL và Canvas fingerprinting
-            '--use-gl=swiftshader',
-            '--enable-webgl',
-            '--enable-unsafe-swiftshader',
-            // Audio
-            '--autoplay-policy=no-user-gesture-required',
-            // Permissions
-            '--deny-permission-prompts'
+            // User agent hints
+            `--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`
           ],
           ignoreDefaultArgs: [
-            '--enable-automation',
-            '--enable-blink-features=IdleDetection' // Tắt idle detection
+            '--enable-automation'
           ],
-          defaultViewport: {
-            width: 1400,
-            height: 1200
-          },
-          timeout: 60000,
-          // ===== THÊM EXECUTABLE PATH ĐỂ SỬ DỤNG CHROME THẬT =====
-          // Nếu có Chrome/Chromium đã cài trên máy, sử dụng nó thay vì Chromium của Puppeteer
-          // executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', // macOS
-          // executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Windows
-          // executablePath: '/usr/bin/google-chrome', // Linux
+          ignoreHTTPSErrors: true,
+          ignoreHTTPSErrors: true,
+          defaultViewport: null, // Use actual viewport instead of fixed size
+          timeout: 60000
         };
 
         // Add userDataDir if email provided
@@ -138,7 +141,23 @@ class BrowserService {
         }
 
         const browser = await puppeteer.launch(launchOptions);
-        const page = await this.createPage(browser);
+        
+        // Get existing pages (usually 1 blank tab is created automatically)
+        const pages = await browser.pages();
+        let page;
+        
+        if (pages.length > 0) {
+          // Use the first existing tab (most reliable for anti-detection)
+          page = pages[0];
+          console.log(`✅ Using existing first tab`);
+          
+          // Apply anti-detection measures to existing tab
+          await this.applyAntiDetection(page);
+        } else {
+          // No tabs exist, create new one
+          page = await this.createPage(browser);
+          console.log(`✅ Created new first tab`);
+        }
 
         // Track browser and page
         if (email) {
@@ -172,9 +191,11 @@ class BrowserService {
     }
   }
 
-  async createPage(browser) {
-    const page = await browser.newPage();
-
+  /**
+   * Apply anti-detection measures to a page
+   * This is extracted from createPage to be reusable for existing pages
+   */
+  async applyAntiDetection(page) {
     // Set realistic user agent (latest Chrome on macOS)
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -365,7 +386,11 @@ class BrowserService {
         // Ignore errors in random mouse movements
       }
     });
+  }
 
+  async createPage(browser) {
+    const page = await browser.newPage();
+    await this.applyAntiDetection(page);
     return page;
   }
 
