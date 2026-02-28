@@ -48,15 +48,11 @@ class BrowserService {
     // Check if browser already open for this email and should reuse
     if (reuseIfOpen && email) {
       const isActive = await this.isBrowserActive(email);
-      
       if (isActive) {
         console.log(`🔄 Browser already open for [${email}], opening new tab...`);
         const browserInfo = this.activeBrowsers.get(email);
         const page = await this.createPage(browserInfo.browser);
-        
-        // Track new page
         browserInfo.pages.push(page);
-        
         return {
           browser: browserInfo.browser,
           page: page,
