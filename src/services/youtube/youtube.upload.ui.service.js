@@ -81,9 +81,43 @@ class YoutubeUploadUiService {
 
   /**
    * Click nút Create để mở dialog upload
+   * Thay đổi: ưu tiên navigate trực tiếp tới /upload để bỏ qua UI menu và reuse tab.
    */
   async clickCreateButton(page) {
-    console.log('🔍 Đang tìm nút Create/Upload...');
+    console.log('🔍 Ensuring upload UI is open (prefer direct /upload)...');
+
+    // If already on upload page, return early
+    try {
+      const current = page.url();
+      if (current && current.includes('/upload')) {
+        console.log('ℹ️ Already on /upload page');
+        await page.waitForSelector('input[type="file"]', { timeout: 5000 }).catch(() => {});
+        return;
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // Try navigating to Studio root (not /upload) and then open upload via UI
+    try {
+      await page.goto('https://studio.youtube.com', { waitUntil: 'networkidle2', timeout: 15000 });
+      // Give UI a moment to stabilize
+      await page.waitForTimeout(2000);
+
+      // If the file input is already present on the Studio page, return early
+      const fileInputHandle = await page.$('input[type="file"]');
+      if (fileInputHandle) {
+        console.log('✅ Studio page loaded and file input is present');
+        return;
+      }
+
+      // Otherwise continue to click flow below to open the upload dialog
+    } catch (err) {
+      console.log('⚠️ Navigation to Studio root failed, falling back to click flow:', err.message);
+      // fallthrough to original click flow
+    }
+
+    console.log('🔍 Đang tìm nút Create/Upload (fallback click flow)...');
 
     // Đợi trang load hoàn toàn
     await new Promise(r => setTimeout(r, 3000));
@@ -150,10 +184,6 @@ class YoutubeUploadUiService {
     // Đợi để xem YouTube mở gì (dialog hoặc menu)
     await new Promise(r => setTimeout(r, 2000));
 
-    // YouTube Studio có 2 UI khác nhau:
-    // 1. UI mới: Click Create -> Mở trực tiếp dialog "Upload videos"
-    // 2. UI cũ: Click Create -> Hiện menu dropdown -> Phải click "Upload videos"
-
     console.log('🔍 Kiểm tra xem dialog upload đã mở chưa...');
 
     // Kiểm tra xem dialog upload đã mở chưa
@@ -198,7 +228,7 @@ class YoutubeUploadUiService {
         const element = await page.$(selector);
         if (element) {
           const text = await page.evaluate(el => el.textContent, element);
-          console.log(`   Tìm thấy menu item: "${text.trim()}"`);
+          console.log(`   Tìm thấy menu item: "${(text || '').trim()}"`);
           await element.click();
           uploadClicked = true;
           break;
@@ -214,7 +244,7 @@ class YoutubeUploadUiService {
         // Tìm trong paper-item
         const items = Array.from(document.querySelectorAll('tp-yt-paper-item, ytcp-ve, [role="menuitem"]'));
         for (const item of items) {
-          const text = item.textContent.toLowerCase();
+          const text = (item.textContent || '').toLowerCase();
           if (text.includes('upload video') ||
             text.includes('tải video lên') ||
             text.includes('upload') && text.includes('video')) {
