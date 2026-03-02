@@ -102,32 +102,81 @@ class BrowserService {
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
+        const fs = require('fs');
+        const path = require('path');
+
+        // Allow overriding paths via env for flexibility
+        let chromeExecutable = process.env.CHROME_EXECUTABLE || null;
+        let defaultUserDataDir = process.env.CHROME_USER_DATA_DIR || null;
+
+        const platform = process.platform; // 'darwin', 'win32', 'linux'
+
+        if (!chromeExecutable) {
+          if (platform === 'darwin') {
+            chromeExecutable = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+          } else if (platform === 'win32') {
+            const programFiles = process.env['PROGRAMFILES'] || 'C:\\Program Files';
+            const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)';
+            const candidates = [
+              path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+              path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe')
+            ];
+            const found = candidates.find(p => fs.existsSync(p));
+            chromeExecutable = found || candidates[0];
+          } else {
+            // linux default
+            chromeExecutable = '/usr/bin/google-chrome';
+          }
+        }
+
+        if (!defaultUserDataDir) {
+          if (platform === 'darwin') {
+            defaultUserDataDir = path.join(process.env.HOME || '', 'Library', 'Application Support', 'Google', 'Chrome');
+          } else if (platform === 'win32') {
+            const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local');
+            defaultUserDataDir = path.join(localAppData, 'Google', 'Chrome', 'User Data');
+          } else {
+            defaultUserDataDir = path.join(process.env.HOME || '', '.config', 'google-chrome');
+          }
+        }
+
+        // Build args dynamically so we can avoid adding sandbox/unupported flags on macOS system Chrome
+        const baseArgs = [
+          '--disable-blink-features=AutomationControlled',
+          '--disable-dev-shm-usage',
+          '--window-size=1200,900',
+          '--disable-features=TranslateUI',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-infobars',
+          // ===== CRITICAL: Remove automation flags =====
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-site-isolation-trials',
+          '--disable-features=ChromeWhatsNewUI',
+          // Language
+          '--lang=en-US,en',
+          // User agent hints
+          `--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`
+        ];
+
+        // By default, avoid adding sandbox-disabling flags when launching the real Google Chrome on macOS
+        // Those flags are unsupported on macOS and produce the warning: "You are using an unsupported command-line flag..."
+        // Keep flags when running in containers/CI where sandboxing causes issues by setting env: KEEP_SANDBOX_FLAGS=true
+        const isSystemChromeOnMac = process.platform === 'darwin' && chromeExecutable.includes('Google Chrome.app');
+        if (!isSystemChromeOnMac || process.env.KEEP_SANDBOX_FLAGS === 'true') {
+          // Only prepend sandbox-specific flags when not using system Chrome on macOS or when explicitly requested
+          baseArgs.unshift('--no-sandbox', '--disable-setuid-sandbox');
+        }
+
         const launchOptions = {
           headless: isHeadless,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-dev-shm-usage',
-            '--window-size=1400,1200',
-            '--disable-features=TranslateUI',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-infobars',
-            // ===== CRITICAL: Remove automation flags =====
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-site-isolation-trials',
-            '--disable-features=ChromeWhatsNewUI',
-            // Language
-            '--lang=en-US,en',
-            // User agent hints
-            `--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`
-          ],
+          executablePath: chromeExecutable,
+          userDataDir: defaultUserDataDir,
+          args: baseArgs,
           ignoreDefaultArgs: [
             '--enable-automation'
           ],
-          ignoreHTTPSErrors: true,
           ignoreHTTPSErrors: true,
           defaultViewport: null, // Use actual viewport instead of fixed size
           timeout: 60000
@@ -203,8 +252,8 @@ class BrowserService {
 
     // Set viewport to match common screen resolutions
     await page.setViewport({
-      width: 1400,
-      height: 1200,
+      width: 1200,
+      height: 900,
       deviceScaleFactor: 1,
       hasTouch: false,
       isLandscape: true,

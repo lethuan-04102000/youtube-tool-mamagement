@@ -161,9 +161,15 @@ class YoutubeUploadService {
         await browser.close();
         console.log('🗑️  Closed browser completely');
       } else {
-        // Chỉ đóng tab, giữ browser để reuse
-        await page.close();
-        console.log('✅ Closed upload tab (browser still open for reuse)');
+        // KEEP PAGE OPEN for reuse: navigate away instead of closing the tab.
+        // Closing the page may cause the service to close the entire browser if it was the last tracked tab.
+        try {
+          await page.goto('https://studio.youtube.com', { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+          console.log('♻️  Kept upload tab open and navigated back to Studio for reuse');
+        } catch (navErr) {
+          // Fallback: just do nothing and keep the page instance alive
+          console.log('⚠️ Could not navigate back to Studio, keeping tab open for reuse');
+        }
       }
 
       result = {
@@ -204,8 +210,13 @@ class YoutubeUploadService {
             await browser.close();
             console.log('🗑️  Closed browser after error');
           } else {
-            await page.close();
-            console.log('🗑️  Closed tab after error');
+            // On error, keep the page open for reuse instead of closing it.
+            try {
+              await page.goto('https://studio.youtube.com', { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+              console.log('♻️  Kept tab open after error for reuse');
+            } catch (navErr) {
+              console.log('⚠️ Could not navigate after error, leaving tab open');
+            }
           }
         } catch (e) {
           console.error('Error closing browser/page:', e.message);
