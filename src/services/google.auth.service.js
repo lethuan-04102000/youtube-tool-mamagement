@@ -252,9 +252,12 @@ class GoogleAuthService {
           throw new Error('Account không có secret key trong database');
         }
         
-        const secretKey = account.code_authenticators;
-        console.log(`🔑 Secret key: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)}`);
-        
+       const secretKey = (account.code_authenticators || '')
+        .replace(/\s+/g, '')   // xoá toàn bộ space
+        .toUpperCase();
+
+      console.log('Secret keyssss:', secretKey);
+              
         // Generate OTP
         const otp = authenticatorService.generateOTP(secretKey);
         console.log(`🔐 OTP Code: ${otp}`);
