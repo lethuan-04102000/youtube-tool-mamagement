@@ -538,3 +538,36 @@ exports.updateAvatarUrl = async (req, res) => {
     });
   }
 };
+
+/**
+ * Delete account by id
+ */
+exports.deleteAccount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Account ID is required' });
+    }
+
+    const account = await AccountYoutube.findByPk(id);
+    if (!account) {
+      return res.status(404).json({ success: false, message: `Account with ID ${id} not found` });
+    }
+
+    // Close browser if open for this account
+    try {
+      const browserService = require('../services/browser.service');
+      await browserService.closeBrowser(account.email);
+    } catch (e) {
+      console.warn('Warning: failed to close browser for account during delete', e.message);
+    }
+
+    // Delete account record
+    await account.destroy();
+
+    return res.json({ success: true, message: `Account ${account.email} deleted` });
+  } catch (error) {
+    console.error('❌ Error deleting account:', error);
+    return res.status(500).json({ success: false, message: 'Failed to delete account', error: error.message });
+  }
+};

@@ -10,7 +10,18 @@ export default function UploadVideoPage() {
   const [uploadMode, setUploadMode] = useState<'url' | 'file'>('url');
   const [urlsText, setUrlsText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
+  // Track concurrent upload jobs so multiple channels can upload simultaneously
+  const [uploads, setUploads] = useState<Array<{
+    id: number;
+    channelId: number;
+    channelName?: string;
+    mode: 'url' | 'file';
+    itemCount: number;
+    status: 'uploading' | 'success' | 'failed';
+    message?: string;
+    results?: BatchUploadResult[];
+    startedAt: number;
+  }>>([]);
   const [results, setResults] = useState<BatchUploadResult[] | null>(null);
   const [loadingChannels, setLoadingChannels] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,33 +119,59 @@ export default function UploadVideoPage() {
         return;
       }
 
-      setUploading(true);
+      // create upload job and run asynchronously
       setResults(null);
+      const jobId = Date.now();
+      const channelName = selectedChannelData?.channelName;
+      const job = {
+        id: jobId,
+        channelId: selectedChannel,
+        channelName,
+        mode: 'url' as const,
+        itemCount: urls.length,
+        status: 'uploading' as const,
+        message: 'Đang upload...',
+        results: undefined,
+        startedAt: Date.now()
+      };
+      setUploads(prev => [job, ...prev]);
 
-      try {
-        // Build videos array from URLs
-        const videos: BatchUploadVideoItem[] = urls.map(url => ({
-          sourceUrl: url,
-          visibility: globalVisibility,
-          scheduleDate: globalScheduleDate || undefined,
-        }));
+      (async () => {
+        try {
+          // Build videos array from URLs
+          const videos: BatchUploadVideoItem[] = urls.map(url => ({
+            sourceUrl: url,
+            visibility: globalVisibility,
+            scheduleDate: globalScheduleDate || undefined,
+          }));
 
-        // Call batch upload API
-        const response = await api.upload.batchUpload({
-          id: selectedChannel,
-          videos,
-        });
-        
-        setResults(response.data?.results || []);
+          // Call batch upload API
+          const response = await api.upload.batchUpload({
+            id: selectedChannel as number,
+            videos,
+          });
 
-        if (response.success && response.data?.summary.success) {
-          setUrlsText('');
+          // update job
+          setUploads(prev => prev.map(j => j.id === jobId ? {
+            ...j,
+            status: 'success',
+            message: 'Hoàn tất',
+            results: response.data?.results || []
+          } : j));
+
+          // also update global results display to show last batch results
+          setResults(response.data?.results || []);
+
+          if (response.success && response.data?.summary.success) {
+            setUrlsText('');
+          }
+        } catch (error: any) {
+          setUploads(prev => prev.map(j => j.id === jobId ? ({ ...j, status: 'failed', message: error?.message || 'Upload failed' }) : j));
+          setResults(prev => prev); // keep previous results
+          // also show simple alert
+          alert(error?.message || 'Upload failed');
         }
-      } catch (error: any) {
-        alert(error.message || 'Upload failed');
-      } finally {
-        setUploading(false);
-      }
+      })();
     } else {
       // Upload files from computer
       if (selectedFiles.length === 0) {
@@ -147,38 +184,55 @@ export default function UploadVideoPage() {
         return;
       }
 
-      setUploading(true);
-      setResults(null);
+      // create job and run async
+      const jobId = Date.now();
+      const channelName = selectedChannelData?.channelName;
+      const job = {
+        id: jobId,
+        channelId: selectedChannel as number,
+        channelName,
+        mode: 'file' as const,
+        itemCount: selectedFiles.length,
+        status: 'uploading' as const,
+        message: 'Đang upload...',
+        results: undefined,
+        startedAt: Date.now()
+      };
+      setUploads(prev => [job, ...prev]);
 
-      try {
-        const formData = new FormData();
-        formData.append('id', selectedChannel.toString());
-        formData.append('visibility', globalVisibility);
-        if (globalScheduleDate) {
-          formData.append('scheduleDate', globalScheduleDate);
-        }
-
-        // Add all files with the same field name 'video'
-        selectedFiles.forEach((file) => {
-          formData.append('video', file);
-        });
-
-        // Call batch file upload API
-        const response = await api.upload.batchUploadFiles(formData);
-        
-        setResults(response.data?.results || []);
-
-        if (response.success && response.data?.summary.success) {
-          setSelectedFiles([]);
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
+      (async () => {
+        try {
+          const formData = new FormData();
+          formData.append('id', (selectedChannel as number).toString());
+          formData.append('visibility', globalVisibility);
+          if (globalScheduleDate) {
+            formData.append('scheduleDate', globalScheduleDate);
           }
+
+          selectedFiles.forEach((file) => {
+            formData.append('video', file);
+          });
+
+          const response = await api.upload.batchUploadFiles(formData);
+
+          setUploads(prev => prev.map(j => j.id === jobId ? ({
+            ...j,
+            status: 'success',
+            message: 'Hoàn tất',
+            results: response.data?.results || []
+          }) : j));
+
+          setResults(response.data?.results || []);
+
+          if (response.success && response.data?.summary.success) {
+            setSelectedFiles([]);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }
+        } catch (error: any) {
+          setUploads(prev => prev.map(j => j.id === jobId ? ({ ...j, status: 'failed', message: error?.message || 'Upload failed' }) : j));
+          alert(error?.message || 'Upload failed');
         }
-      } catch (error: any) {
-        alert(error.message || 'Upload failed');
-      } finally {
-        setUploading(false);
-      }
+      })();
     }
   };
 
@@ -527,93 +581,42 @@ https://drive.google.com/file/d/...
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={uploading || !selectedChannel || itemCount === 0 || itemCount > 15}
+            disabled={!selectedChannel || itemCount === 0 || itemCount > 15}
             className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-lg font-semibold hover:from-blue-700 hover:to-blue-800 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center text-base shadow-lg disabled:shadow-none"
           >
-            {uploading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                Đang xử lý {itemCount} {uploadMode === 'url' ? 'videos' : 'files'}...
-              </>
-            ) : (
-              <>
-                <Upload className="w-5 h-5 mr-2" />
-                Upload {itemCount} {uploadMode === 'url' ? 'Video' : 'File'}{itemCount > 1 ? 's' : ''}
-              </>
-            )}
-          </button>
-        </form>
+            <>
+              <Upload className="w-5 h-5 mr-2" />
+              Upload {itemCount} {uploadMode === 'url' ? 'Video' : 'File'}{itemCount > 1 ? 's' : ''}
+            </>
+           </button>
+         </form>
 
-        {/* Results */}
-        {results && results.length > 0 && (
-          <div className="mt-8 space-y-3">
-            <div className="flex items-center justify-between pb-3 border-b-2 border-gray-200">
-              <h3 className="text-lg font-bold text-gray-900">
-                📊 Kết quả Upload
-              </h3>
-              <span className={`text-sm font-semibold px-3 py-1.5 rounded-full ${
-                successCount === totalCount 
-                  ? 'bg-green-100 text-green-700 border-2 border-green-300' 
-                  : successCount > 0 
-                  ? 'bg-yellow-100 text-yellow-700 border-2 border-yellow-300' 
-                  : 'bg-red-100 text-red-700 border-2 border-red-300'
-              }`}>
-                {successCount}/{totalCount} thành công
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              {results.map((result) => (
-                <div
-                  key={result.index}
-                  className={`p-4 rounded-lg border-2 transition-all ${
-                    result.success
-                      ? 'bg-green-50 border-green-300 hover:shadow-md'
-                      : 'bg-red-50 border-red-300 hover:shadow-md'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    {result.success ? (
-                      <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`text-sm font-bold ${
-                          result.success ? 'text-green-800' : 'text-red-800'
-                        }`}>
-                          Video #{result.index}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-600 truncate mb-1">
-                        {result.sourceUrl}
-                      </p>
-                      <p className={`text-sm font-medium ${
-                        result.success ? 'text-green-700' : 'text-red-700'
-                      }`}>
-                        {result.message}
-                      </p>
-                      {result.videoUrl && (
-                        <a
-                          href={result.videoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 hover:underline mt-2 font-medium"
-                        >
-                          🎬 Xem video trên YouTube →
-                        </a>
-                      )}
-                      {result.error && !result.success && (
-                        <p className="text-xs text-red-600 mt-2 font-mono bg-red-100 p-2 rounded">
-                          ❌ {result.error}
-                        </p>
-                      )}
-                    </div>
+        {/* Active upload jobs */}
+        {uploads.length > 0 && (
+          <div className="mt-6 space-y-2">
+            {uploads.map(job => (
+              <div key={job.id} className={`p-3 rounded-md border ${job.status === 'uploading' ? 'border-blue-300 bg-blue-50' : job.status === 'success' ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'}`}>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">
+                    {job.mode === 'url' ? 'URL upload' : 'File upload'} • {job.channelName || job.channelId}
+                    <div className="text-xs text-gray-600">{job.itemCount} items • {job.status}</div>
+                  </div>
+                  <div className="text-sm font-medium">
+                    {job.status === 'uploading' && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
+                    {job.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
+                    {job.status === 'failed' && <XCircle className="w-4 h-4 text-red-600" />}
                   </div>
                 </div>
-              ))}
-            </div>
+                {job.message && <div className="text-xs text-gray-700 mt-2 font-mono">{job.message}</div>}
+                {job.results && job.results.length > 0 && (
+                  <div className="text-xs text-gray-700 mt-2">
+                    {job.results.map(r => (
+                      <div key={r.index} className="truncate">#{r.index} - {r.message}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
