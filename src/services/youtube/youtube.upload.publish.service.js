@@ -14,7 +14,7 @@ class YoutubeUploadPublishService {
 
     while (Date.now() - startTime < maxWaitProcessing) {
       const status = await page.evaluate(() => {
-        const processingText = document.body.innerText;
+        const processingText = document.body.innerText || '';
 
         // Kiểm tra lỗi
         const errorMessages = [];
@@ -26,10 +26,15 @@ class YoutubeUploadPublishService {
         const doneBtn = document.querySelector('#done-button');
         const isDoneEnabled = doneBtn && !doneBtn.hasAttribute('disabled');
 
+        // Detect copyright (English + Vietnamese)
+        const lc = processingText.toLowerCase();
+        const copyrightDetected = lc.includes('copyright') || lc.includes('copyright-protected') || lc.includes('bản quyền') || lc.includes('nội dung có bản quyền') || lc.includes('phát hiện nội dung');
+
         return {
           hasError: errorMessages.length > 0,
           errorMessages,
-          isDoneEnabled
+          isDoneEnabled,
+          copyrightDetected
         };
       });
 
@@ -37,6 +42,11 @@ class YoutubeUploadPublishService {
         const errorMsg = status.errorMessages.join(', ');
         console.error(`❌ YouTube Error: ${errorMsg}`);
         throw new Error(`YouTube upload error: ${errorMsg}`);
+      }
+
+      if (status.copyrightDetected) {
+        console.error('❌ Copyright-related issue detected during scheduling. Aborting upload.');
+        throw new Error('YouTube upload aborted: copyright-related issue detected');
       }
 
       if (status.isDoneEnabled) {
@@ -124,115 +134,150 @@ class YoutubeUploadPublishService {
    * Publish video và lấy URL
    */
   async publishVideo(page) {
-    // Đợi video processing hoàn tất trước khi publish
-    console.log('⏳ Đang đợi video processing hoàn tất...');
+    // ─────────────────────────────────────────────────────────────
+    // Chờ nút Publish xuất hiện và không bị disabled (tối đa 30 phút)
+    // - Video ngắn: upload nhanh, không có %, nút Publish enable ngay
+    // - Video dài:  có "Uploading X%", sau đó YouTube xử lý SD rồi mới enable
+    // ─────────────────────────────────────────────────────────────
+    console.log('⏳ Đang chờ nút Publish sẵn sàng...');
+    const maxWait = 30 * 60 * 1000; // 30 phút
+    const waitStart = Date.now();
 
-    const maxWaitProcessing = 1800000; // 30 phút (cho video dài)
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxWaitProcessing) {
+    while (Date.now() - waitStart < maxWait) {
       const status = await page.evaluate(() => {
-        const processingText = document.body.innerText;
+        const txt = document.body.innerText || '';
 
-        // Kiểm tra processing status
-        const isProcessing = processingText.includes('standard definition') || 
-                            processingText.includes('SD version') ||
-                            processingText.includes('Processing') ||
-                            processingText.includes('Uploading');
-
-        // Kiểm tra lỗi thật sự
+        // Kiểm tra lỗi
         const errorMessages = [];
-        if (processingText.includes('Processing abandoned')) errorMessages.push('Processing abandoned');
-        if (processingText.includes('Video is too long')) errorMessages.push('Video is too long');
-        if (processingText.includes('Copyright claim')) errorMessages.push('Copyright claim');
-        if (processingText.includes('Upload failed')) errorMessages.push('Upload failed');
-        if (processingText.includes('Video rejected')) errorMessages.push('Video rejected');
+        if (txt.includes('Processing abandoned')) errorMessages.push('Processing abandoned');
+        if (txt.includes('Video is too long')) errorMessages.push('Video is too long');
+        if (txt.includes('Copyright claim')) errorMessages.push('Copyright claim');
+        if (txt.includes('Upload failed')) errorMessages.push('Upload failed');
+        if (txt.includes('Video rejected')) errorMessages.push('Video rejected');
+        try {
+          if (/Checks complete[\s\S]*Copyright-protected content found/i.test(txt))
+            errorMessages.push('Copyright-protected content found');
+        } catch (e) { /* ignore */ }
+        if (txt.includes('Đã tìm thấy nội dung được bảo vệ bản quyền') ||
+            txt.includes('Đã phát hiện nội dung được bảo vệ bản quyền') ||
+            (txt.includes('Kiểm tra') && txt.includes('bản quyền')))
+          errorMessages.push('Copyright-protected content found (vi)');
 
-        // Kiểm tra nút Publish
-        const publishBtn = document.querySelector('#done-button');
-        const isPublishEnabled = publishBtn && !publishBtn.hasAttribute('disabled');
+        // Nút Publish: tìm theo aria-label="Publish" và aria-disabled="false"
+        const publishBtn =
+          document.querySelector('button[aria-label="Publish"][aria-disabled="false"]') ||
+          document.querySelector('#done-button:not([disabled])') ||
+          (() => {
+            const btn = document.querySelector('#done-button');
+            return btn && !btn.hasAttribute('disabled') ? btn : null;
+          })();
 
-        return {
-          hasError: errorMessages.length > 0,
-          errorMessages,
-          isPublishEnabled,
-          isProcessing
-        };
+        const isPublishEnabled = !!publishBtn;
+
+        // Trạng thái đang làm gì
+        const isUploading = /Uploading\s+\d+%/i.test(txt) || /Đang tải lên\s+\d+%/i.test(txt);
+        const isProcessingSD = txt.includes('standard definition') ||
+                               txt.includes('SD version') ||
+                               txt.includes('Video processing') ||
+                               txt.includes('Đang xử lý');
+
+        const pctMatch = txt.match(/(?:Uploading|Đang tải lên)\s+(\d+%[^\n]*)/i);
+        const progressText = pctMatch ? pctMatch[0].trim() : null;
+
+        return { errorMessages, isPublishEnabled, isUploading, isProcessingSD, progressText };
       });
 
-      if (status.hasError) {
+      // Lỗi → throw ngay
+      if (status.errorMessages.length > 0) {
         const errorMsg = status.errorMessages.join(', ');
         console.error(`❌ YouTube Error: ${errorMsg}`);
         throw new Error(`YouTube upload error: ${errorMsg}`);
       }
 
-      if (status.isProcessing) {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        console.log(`⏳ Video đang processing... (${elapsed}s elapsed)`);
-      }
-
+      // Nút Publish xuất hiện → thoát vòng lặp
       if (status.isPublishEnabled) {
-        console.log('✅ Video đã sẵn sàng để publish!');
+        console.log('✅ Nút Publish đã sẵn sàng!');
         break;
       }
 
-      await new Promise(r => setTimeout(r, 5000));
+      // Log trạng thái hiện tại
+      const elapsed = Math.floor((Date.now() - waitStart) / 1000);
+      if (status.isUploading) {
+        console.log(`📤 ${status.progressText || 'Uploading...'} (${elapsed}s elapsed)`);
+      } else if (status.isProcessingSD) {
+        console.log(`⚙️  YouTube đang xử lý SD... (${elapsed}s elapsed)`);
+      } else {
+        console.log(`⏳ Chờ nút Publish... (${elapsed}s elapsed)`);
+      }
+
+      await new Promise(r => setTimeout(r, 3000));
     }
 
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1000));
 
     // Click nút Publish
     console.log('🚀 Đang click nút Publish...');
-
     const publishClicked = await page.evaluate(() => {
-      const publishBtn = document.querySelector('#done-button');
-      if (publishBtn && !publishBtn.hasAttribute('disabled')) {
-        publishBtn.click();
-        return true;
-      }
+      const btn =
+        document.querySelector('button[aria-label="Publish"][aria-disabled="false"]') ||
+        document.querySelector('#done-button:not([disabled])') ||
+        (() => {
+          const b = document.querySelector('#done-button');
+          return b && !b.hasAttribute('disabled') ? b : null;
+        })();
+      if (btn) { btn.click(); return true; }
       return false;
     });
 
     if (!publishClicked) {
-      console.log('⚠️ Nút Publish bị disabled, thử đợi thêm...');
-      await new Promise(r => setTimeout(r, 10000));
-
+      console.log('⚠️ Không click được nút Publish, thử lại sau 5s...');
+      await new Promise(r => setTimeout(r, 5000));
       await page.evaluate(() => {
-        const publishBtn = document.querySelector('#done-button');
-        if (publishBtn) publishBtn.click();
+        const btn = document.querySelector('#done-button');
+        if (btn) btn.click();
       });
     }
 
     console.log('✅ Đã click Publish');
 
-    // Đợi video được publish
-    console.log('⏳ Đang đợi video được publish...');
+    // Mới: Sau khi click Publish — đơn giản: đợi 10s rồi đóng dialog bằng nút Close (nếu có)
+    console.log('⏳ Đợi 10s sau khi Publish rồi sẽ click Close nếu có...');
+    await new Promise(r => setTimeout(r, 10000));
 
-    const maxWaitPublish = 60000;
-    const publishStartTime = Date.now();
-    let isPublished = false;
-
-    while (Date.now() - publishStartTime < maxWaitPublish && !isPublished) {
-      isPublished = await page.evaluate(() => {
-        const pageText = document.body.innerText;
-        return pageText.includes('Video published') ||
-          pageText.includes('Uploaded') ||
-          pageText.includes('Published') ||
-          document.querySelector('ytcp-video-share-dialog') !== null;
-      });
-
-      if (!isPublished) {
-        await new Promise(r => setTimeout(r, 2000));
+    const closeClicked = await page.evaluate(() => {
+      const selectors = [
+        'button[aria-label="Close"]',
+        'button[aria-label="Đóng"]',
+        'button[title="Close"]',
+        'button[title="Đóng"]'
+      ];
+      for (const sel of selectors) {
+        const btn = document.querySelector(sel);
+        if (btn && !btn.hasAttribute('disabled') && btn.offsetParent !== null) {
+          btn.click();
+          return true;
+        }
       }
-    }
 
-    if (isPublished) {
-      console.log('✅ Video đã được publish!');
+      // Fallback: tìm theo text 'Close' hoặc 'Đóng'
+      const btns = Array.from(document.querySelectorAll('button'));
+      for (const b of btns) {
+        const t = (b.innerText || '').trim();
+        if (/^Close$/i.test(t) || /^Đóng$/i.test(t)) {
+          if (!b.hasAttribute('disabled')) { b.click(); return true; }
+        }
+      }
+      return false;
+    });
+
+    if (closeClicked) {
+      console.log('✅ Đã click Close sau khi Publish');
     } else {
-      console.log('⚠️ Không xác nhận được trạng thái publish');
+      console.log('⚠️ Không tìm thấy nút Close sau 10s — tiếp tục lấy URL');
     }
 
-    await new Promise(r => setTimeout(r, 3000));
+    // Chờ thêm 1s để UI ổn định trước khi lấy URL
+    await new Promise(r => setTimeout(r, 1000));
 
     // Lấy video URL
     console.log('⏳ Đang lấy video URL...');
@@ -246,8 +291,6 @@ class YoutubeUploadPublishService {
       };
     } else {
       console.log('⚠️ Không lấy được video URL - nhưng video có thể đã được publish');
-      // Video đã publish nhưng chưa lấy được URL (do processing)
-      // Vẫn coi là thành công
       return {
         success: true,
         videoUrl: null,

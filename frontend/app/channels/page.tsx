@@ -417,6 +417,25 @@ export default function ListChannelsPage() {
     setAvatarUrlInput('');
   };
 
+  const handleDeleteAccount = async (id: number, email: string) => {
+    const confirmed = confirm(`Xác nhận xóa account ${email} (ID: ${id})?`);
+    if (!confirmed) return;
+
+    try {
+      const result = await accountsAPI.deleteAccount(id);
+      if (result.success) {
+        alert(`✅ ${result.message}`);
+        // Refresh list
+        fetchChannels();
+      } else {
+        throw new Error(result.message || 'Delete failed');
+      }
+    } catch (error: any) {
+      console.error('Delete account failed:', error);
+      alert(`❌ Delete failed: ${error.message}`);
+    }
+  };
+
   return (
     <div className="p-6">
       {/* Compact Header */}
@@ -738,7 +757,15 @@ export default function ListChannelsPage() {
                           {retryingId === channel.id ? 'Đang xử lý...' : 'Retry'}
                         </button>
                       ) : (
-                        <span className="text-xs text-gray-400">-</span>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => handleDeleteAccount(channel.id, channel.email)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                            title="Delete account"
+                          >
+                            Xóa
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
