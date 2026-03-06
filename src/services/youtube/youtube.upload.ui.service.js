@@ -350,6 +350,82 @@ class YoutubeUploadUiService {
 
     console.log('✅ Sẵn sàng nhập thông tin video');
   }
+
+  // New method: sau khi click Publish, chờ cho đến khi không còn chữ "Uploading" hoặc thấy trạng thái "complete" rồi mới click Close
+  async clickCloseWhenReady(page, { maxWait = 120000 } = {}) {
+    const start = Date.now();
+    console.log('⏳ Waiting for post-publish uploading to finish before clicking Close...');
+    let attempt = 0;
+
+    while (Date.now() - start < maxWait) {
+      attempt++;
+      const status = await page.evaluate(() => {
+        const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+
+        const uploading = bodyText.includes('uploading');
+        const checksComplete = bodyText.includes('checks complete') || bodyText.includes('checks are complete');
+        const uploadComplete = bodyText.includes('upload complete') || bodyText.includes('processing complete') || bodyText.includes('complete') || bodyText.includes('uploaded') || checksComplete;
+
+        const pctMatch = bodyText.match(/(\d{1,3})\s*%/);
+        const pct = pctMatch ? parseInt(pctMatch[1], 10) : null;
+
+        return { uploading, uploadComplete, pct };
+      });
+
+      console.log(`   Post-publish check #${attempt}: uploading=${status.uploading}, complete=${status.uploadComplete}, pct=${status.pct}`);
+
+      if (status.uploading) {
+        console.log('   Still uploading, waiting 10s before retry...');
+        await page.waitForTimeout(10000);
+        continue;
+      }
+
+      if (status.uploadComplete || (status.pct !== null && status.pct >= 99)) {
+        // Thử click Close nếu có
+        const clicked = await page.evaluate(() => {
+          try {
+            // Tìm các nút có khả năng đóng dialog: 'Close', 'Done', 'X', aria-label 'Close'...
+            const candidates = Array.from(document.querySelectorAll('ytcp-button, button, paper-button'));
+            for (const btn of candidates) {
+              const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+              const text = (btn.textContent || '').toLowerCase();
+
+              if (aria.includes('close') || text.includes('close') || text.includes('done') || aria.includes('done')) {
+                btn.click();
+                return true;
+              }
+            }
+
+            // Nếu không tìm thấy, thử tìm nút đóng trong dialog cụ thể
+            const dialog = document.querySelector('ytcp-dialog') || document.querySelector('tp-yt-paper-dialog') || document.querySelector('ytcp-uploads-dialog');
+            if (dialog) {
+              const closeBtn = dialog.querySelector('button[aria-label*="close"], button[aria-label*="Close"], ytcp-button[aria-label*="Close"], button:contains("Close")');
+              if (closeBtn) { closeBtn.click(); return true; }
+            }
+          } catch (e) {
+            // ignore
+          }
+          return false;
+        });
+
+        if (clicked) {
+          console.log('✅ Clicked Close after upload complete');
+          await page.waitForTimeout(1000);
+          return true;
+        }
+
+        console.log('⚠️ Close button not found yet, waiting 3s and retrying...');
+        await page.waitForTimeout(3000);
+        continue;
+      }
+
+      // Nếu không detect được trạng thái rõ ràng, chờ 3s rồi kiểm tra lại
+      await page.waitForTimeout(3000);
+    }
+
+    console.log('⚠️ Timeout waiting for post-publish upload to finish');
+    return false;
+  }
 }
 
 module.exports = new YoutubeUploadUiService();

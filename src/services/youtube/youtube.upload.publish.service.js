@@ -240,40 +240,92 @@ class YoutubeUploadPublishService {
 
     console.log('✅ Đã click Publish');
 
-    // Mới: Sau khi click Publish — đơn giản: đợi 10s rồi đóng dialog bằng nút Close (nếu có)
-    console.log('⏳ Đợi 10s sau khi Publish rồi sẽ click Close nếu có...');
-    await new Promise(r => setTimeout(r, 10000));
+    // Post-publish: chờ cho đến khi thấy "Upload complete" hoặc "up to SD" thì click Close
+    // - Đang upload:  "Uploading 76% ... 18 seconds left"  → chờ tiếp
+    // - Upload xong:  "Upload complete ... Processing will begin shortly" → có thể đóng
+    // - Đang SD:      "Processing up to SD ... 3 minutes left" → có thể đóng
+    // Tối đa 600s
+    console.log('⏳ Chờ sau khi Publish: đợi "Upload complete" hoặc "up to SD" trước khi đóng...');
+    const maxCloseWait = 600000; // 600 seconds
+    const closeStart = Date.now();
+    let closeClicked = false;
 
-    const closeClicked = await page.evaluate(() => {
-      const selectors = [
-        'button[aria-label="Close"]',
-        'button[aria-label="Đóng"]',
-        'button[title="Close"]',
-        'button[title="Đóng"]'
-      ];
-      for (const sel of selectors) {
-        const btn = document.querySelector(sel);
-        if (btn && !btn.hasAttribute('disabled') && btn.offsetParent !== null) {
-          btn.click();
-          return true;
+    while (Date.now() - closeStart < maxCloseWait) {
+      const status = await page.evaluate(() => {
+        const txt = (document.body && document.body.innerText) ? document.body.innerText : '';
+
+        // Đang uploading: có "Uploading X%" hoặc "Đang tải lên X%"
+        const isUploading = /Uploading\s+\d+\s*%/i.test(txt) || /Đang tải lên\s+\d+\s*%/i.test(txt);
+
+        // Upload xong: "Upload complete"
+        const isUploadComplete = /Upload complete/i.test(txt) || /Tải lên hoàn tất/i.test(txt);
+
+        // Đang processing SD: "Processing up to SD" hoặc "up to SD"
+        const isProcessingSD = /Processing up to SD/i.test(txt) || /up to SD/i.test(txt) || /Đang xử lý.*SD/i.test(txt);
+
+        // Processing bị delay: "Processing delayed up to a few hours"
+        const isProcessingDelayed = /Processing delayed/i.test(txt) || /delayed up to/i.test(txt) || /Xử lý bị trì hoãn/i.test(txt);
+
+        // Có thể đóng khi: upload xong HOẶC đang SD HOẶC processing delayed (không còn % uploading)
+        const canClose = !isUploading && (isUploadComplete || isProcessingSD || isProcessingDelayed);
+
+        const pctMatch = txt.match(/Uploading\s+(\d+)\s*%/i) || txt.match(/Đang tải lên\s+(\d+)\s*%/i);
+        const pct = pctMatch ? parseInt(pctMatch[1], 10) : null;
+
+        return { isUploading, isUploadComplete, isProcessingSD, isProcessingDelayed, canClose, pct };
+      });
+
+      const elapsed = Math.floor((Date.now() - closeStart) / 1000);
+      console.log(`   post-publish [${elapsed}s]: uploading=${status.isUploading}(${status.pct ?? '-'}%), uploadComplete=${status.isUploadComplete}, processingSD=${status.isProcessingSD}, processingDelayed=${status.isProcessingDelayed}, canClose=${status.canClose}`);
+
+      if (status.canClose) {
+        // Thử click Close
+        closeClicked = await page.evaluate(() => {
+          const trySelectors = [
+            'button[aria-label="Close"]',
+            'button[aria-label="Đóng"]',
+            'button[title="Close"]',
+            'button[title="Đóng"]',
+            '#close-button'
+          ];
+          for (const sel of trySelectors) {
+            try {
+              const btn = document.querySelector(sel);
+              if (btn && !btn.hasAttribute('disabled') && btn.offsetParent !== null) { btn.click(); return true; }
+            } catch (e) { /* ignore */ }
+          }
+          // Fallback: tìm theo text
+          const btns = Array.from(document.querySelectorAll('button'));
+          for (const b of btns) {
+            const t = (b.innerText || '').trim().toLowerCase();
+            if ((t === 'close' || t === 'đóng') && !b.hasAttribute('disabled') && b.offsetParent !== null) {
+              b.click(); return true;
+            }
+          }
+          return false;
+        });
+
+        if (closeClicked) {
+          console.log('✅ Clicked Close sau khi upload/processing sẵn sàng');
+          break;
         }
+        // Nếu chưa tìm thấy nút Close, chờ 3s rồi thử lại
+        console.log('   Close button not found yet, retrying in 3s...');
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
 
-      // Fallback: tìm theo text 'Close' hoặc 'Đóng'
-      const btns = Array.from(document.querySelectorAll('button'));
-      for (const b of btns) {
-        const t = (b.innerText || '').trim();
-        if (/^Close$/i.test(t) || /^Đóng$/i.test(t)) {
-          if (!b.hasAttribute('disabled')) { b.click(); return true; }
-        }
+      if (status.isUploading) {
+        console.log(`   Vẫn đang uploading (${status.pct ?? '?'}%) — chờ 10s...`);
+        await new Promise(r => setTimeout(r, 10000));
+      } else {
+        // Không rõ trạng thái — chờ ngắn
+        await new Promise(r => setTimeout(r, 5000));
       }
-      return false;
-    });
+    }
 
-    if (closeClicked) {
-      console.log('✅ Đã click Close sau khi Publish');
-    } else {
-      console.log('⚠️ Không tìm thấy nút Close sau 10s — tiếp tục lấy URL');
+    if (!closeClicked) {
+      console.log('⚠️ Timeout 600s hoặc không tìm được nút Close — tiếp tục lấy URL');
     }
 
     // Chờ thêm 1s để UI ổn định trước khi lấy URL

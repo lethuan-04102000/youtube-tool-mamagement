@@ -312,6 +312,20 @@ class BrowserService {
       Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en']
       });
+
+      // Also set navigator.language to ensure sites (like YouTube) see the primary language
+      Object.defineProperty(navigator, 'language', {
+        get: () => 'en-US'
+      });
+
+      // Set document language to en to help server-side and client-side checks
+      try {
+        if (document && document.documentElement) {
+          document.documentElement.lang = 'en-US';
+        }
+      } catch (e) {
+        // ignore
+      }
       
       // Override chrome property
       window.chrome = {
@@ -398,6 +412,15 @@ class BrowserService {
         get: () => 8
       });
     });
+
+    // Ensure Accept-Language header is present for existing pages
+    try {
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9'
+      });
+    } catch (e) {
+      // ignore
+    }
 
     // Add random mouse movements to mimic human behavior
     page.on('load', async () => {
