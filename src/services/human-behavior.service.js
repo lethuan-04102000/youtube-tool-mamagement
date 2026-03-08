@@ -161,30 +161,16 @@ class HumanBehaviorService {
    */
   async togglePlayPause(page) {
     try {
-      // Pause video
-      await page.evaluate(() => {
-        const video = document.querySelector('video');
-        if (video && !video.paused) {
-          video.pause();
-        }
-      });
-      
-      console.log('⏸️  Paused video');
-      
-      // Wait a bit (simulate reading comments, etc)
-      await this.sleep(this.randomDelay(2000, 5000));
-      
-      // Resume video
-      await page.evaluate(() => {
-        const video = document.querySelector('video');
-        if (video && video.paused) {
-          video.play();
-        }
-      });
-      
-      console.log('▶️  Resumed video');
+      // NOTE: Pause/resume behavior removed to avoid stopping playback.
+      // Perform a small non-pausing interaction instead (mouse move).
+      const viewport = await page.viewport();
+      const x = Math.floor(Math.random() * (viewport.width || 800));
+      const y = Math.floor(Math.random() * (viewport.height || 600));
+      await page.mouse.move(x, y, { steps: this.randomDelay(2, 8) });
+      await this.sleep(this.randomDelay(300, 800));
+      console.log('ℹ️  togglePlayPause replaced with non-pausing interaction');
     } catch (error) {
-      console.warn('⚠️  Play/pause failed:', error.message);
+      console.warn('⚠️  togglePlayPause interaction failed:', error.message);
     }
   }
 
@@ -217,8 +203,8 @@ class HumanBehaviorService {
         // Mouse movement
         await this.randomMouseMovements(page);
       } else if (action < 0.45) {
-        // Toggle pause/play
-        await this.togglePlayPause(page);
+        // Small interaction (previously pause/play) — do a non-pausing interaction instead
+        await this.clickOnVideo(page);
       } else if (action < 0.55) {
         // Seek video
         await this.seekVideo(page);

@@ -58,12 +58,39 @@ export default function UploadVideoPage() {
     }
   };
 
-  const parseUrls = (text: string): string[] => {
+  // Validate HTTP/HTTPS URL
+  const isValidHttpUrl = (s: string) => {
+    try {
+      const u = new URL(s);
+      return (u.protocol === 'http:' || u.protocol === 'https:');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // Parse lines into video items supporting optional "url|title" format
+  const parseVideoItems = (text: string): Array<{ sourceUrl: string; title?: string | null }> => {
+    if (!text) return [];
+
     return text
       .split('\n')
       .map(line => line.trim())
-      .filter(line => line.length > 0 && (line.startsWith('http://') || line.startsWith('https://')));
+      .filter(line => line.length > 0)
+      .map(line => {
+        // Split at first '|' only — allow '|' inside title
+        const pipeIndex = line.indexOf('|');
+        if (pipeIndex >= 0) {
+          const urlPart = line.slice(0, pipeIndex).trim();
+          const titlePart = line.slice(pipeIndex + 1).trim();
+          return { sourceUrl: urlPart, title: titlePart === '' ? null : titlePart };
+        }
+        return { sourceUrl: line, title: null };
+      })
+      .filter(item => item.sourceUrl && isValidHttpUrl(item.sourceUrl));
   };
+
+  // Backwards-compatible small helper: return just URLs (used nowhere now but kept for clarity)
+  const extractUrls = (text: string): string[] => parseVideoItems(text).map(i => i.sourceUrl);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -107,15 +134,15 @@ export default function UploadVideoPage() {
 
     // Validate based on upload mode
     if (uploadMode === 'url') {
-      const urls = parseUrls(urlsText);
+      const videoItems = parseVideoItems(urlsText);
 
-      if (urls.length === 0) {
+      if (videoItems.length === 0) {
         alert('Vui lòng nhập ít nhất 1 URL video (mỗi URL trên 1 dòng)');
         return;
       }
 
-      if (urls.length > 15) {
-        alert('Tối đa 15 videos mỗi lần upload. Bạn đã nhập ' + urls.length + ' URLs');
+      if (videoItems.length > 15) {
+        alert('Tối đa 15 videos mỗi lần upload. Bạn đã nhập ' + videoItems.length + ' URLs');
         return;
       }
 
@@ -128,7 +155,7 @@ export default function UploadVideoPage() {
         channelId: selectedChannel,
         channelName,
         mode: 'url' as const,
-        itemCount: urls.length,
+        itemCount: videoItems.length,
         status: 'uploading' as const,
         message: 'Đang upload...',
         results: undefined,
@@ -138,9 +165,10 @@ export default function UploadVideoPage() {
 
       (async () => {
         try {
-          // Build videos array from URLs
-          const videos: BatchUploadVideoItem[] = urls.map(url => ({
-            sourceUrl: url,
+          // Build videos array from parsed lines (support optional per-line title)
+          const videos: BatchUploadVideoItem[] = videoItems.map(item => ({
+            sourceUrl: item.sourceUrl,
+            title: item.title || undefined,
             visibility: globalVisibility,
             scheduleDate: globalScheduleDate || undefined,
           }));
@@ -250,7 +278,7 @@ export default function UploadVideoPage() {
   });
 
   const selectedChannelData = channels.find(c => c.id === selectedChannel);
-  const urlCount = parseUrls(urlsText).length;
+  const urlCount = parseVideoItems(urlsText).length;
   const fileCount = selectedFiles.length;
   const itemCount = uploadMode === 'url' ? urlCount : fileCount;
   const successCount = results?.filter(r => r.success).length || 0;
@@ -432,7 +460,7 @@ export default function UploadVideoPage() {
               <textarea
                 value={urlsText}
                 onChange={(e) => setUrlsText(e.target.value)}
-                placeholder={`Nhập URLs của video (mỗi URL trên 1 dòng, tối đa 15 URLs)
+                placeholder={`Nhập URLs của video (mỗi URL trên 1 dòng, tối đa 15 URLs). Ghi chú: bạn có thể truyền kèm tiêu đề bằng cú pháp:\nhttps://...| Your title here\nNếu không có '|' tiêu đề sẽ được lấy từ metadata hoặc để trống.
 
 Ví dụ:
 https://www.facebook.com/reel/123456789

@@ -402,12 +402,15 @@ class UploadController {
         console.log(`\n   [${videoNum}/${videos.length}] Uploading to YouTube: ${downloadResult.filePath}`);
 
         try {
+          // Determine title: prefer user-provided title in videos[].title, then download metadata
+          const uploadTitle = downloadResult.title || (downloadResult.videoDetails && downloadResult.videoDetails.title) || 'Untitled';
+
           // Upload video to YouTube
           const uploadResult = await youtubeUploadService.uploadVideo(
             account.email,
             downloadResult.filePath,
             {
-              title: downloadResult.title,
+              title: uploadTitle,
               description: downloadResult.description,
               visibility: downloadResult.videoDetails.visibility || 'public',
               tags: downloadResult.videoDetails.tags,
@@ -421,11 +424,25 @@ class UploadController {
             success: uploadResult.success,
             message: uploadResult.message,
             videoUrl: uploadResult.data?.videoUrl,
-            error: uploadResult.error
+            error: uploadResult.error,
+            title: uploadTitle
           });
 
           if (uploadResult.success) {
             console.log(`   ✅ [${videoNum}/${videos.length}] Upload success: ${uploadResult.data?.videoUrl}`);
+            
+            // Persist uploaded video record in DB
+            try {
+              await UploadedVideo.create({
+                account_youtube_id: account.id,
+                email: account.email,
+                video_url: uploadResult.data?.videoUrl,
+                title: uploadTitle,
+                source_url: downloadResult.sourceUrl
+              });
+            } catch (dbErr) {
+              console.warn(`⚠️  Failed to save UploadedVideo record: ${dbErr.message}`);
+            }
             
             // Delete downloaded file after successful upload
             if (downloadResult.downloadService) {

@@ -147,13 +147,14 @@ class WatchShortsPuppeteerService {
       
       try {
         if (action < 0.2) {
-          // Pause/Resume (20%)
-          console.log(`⏯️  Pause/Resume (${remainingTime}s left)`);
-          await page.keyboard.press('Space');
-          await this.sleep(this.randomDelay(2000, 4000));
-          await page.keyboard.press('Space');
-          actions.push('pause_play');
-          await this.sleep(this.randomDelay(1000, 2000));
+          // Small interaction (20%) — avoid pausing: move mouse or tap area
+          console.log(`🖱️  Small interaction (${remainingTime}s left)`);
+          const viewport = await page.viewport();
+          const x = Math.floor(Math.random() * (viewport.width || 400));
+          const y = Math.floor(Math.random() * (viewport.height || 800));
+          await page.mouse.move(x, y, { steps: this.randomDelay(2, 6) });
+          await this.sleep(this.randomDelay(500, 1200));
+          actions.push('interaction');
           
         } else if (action < 0.3) {
           // Volume control (10%)
