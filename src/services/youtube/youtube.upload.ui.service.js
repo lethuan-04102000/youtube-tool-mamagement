@@ -359,48 +359,75 @@ class YoutubeUploadUiService {
 
     while (Date.now() - start < maxWait) {
       attempt++;
+      const elapsedSec = Math.floor((Date.now() - start) / 1000);
+
       const status = await page.evaluate(() => {
         const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
 
         const uploading = bodyText.includes('uploading');
         const checksComplete = bodyText.includes('checks complete') || bodyText.includes('checks are complete');
-        const uploadComplete = bodyText.includes('upload complete') || bodyText.includes('processing complete') || bodyText.includes('complete') || bodyText.includes('uploaded') || checksComplete;
 
+        // Detect common complete/finished indicators
+        const uploadComplete = bodyText.includes('upload complete') || bodyText.includes('processing complete') || bodyText.includes('uploaded') || checksComplete || bodyText.includes('upload finished');
+
+        // Detect SD processing (YouTube sometimes shows "up to SD" or "up to sd")
+        const processingSD = bodyText.includes('up to sd') || bodyText.includes('up to standard') || bodyText.includes('up to sd quality');
+
+        // Detect processing messages that indicate processing will take longer
+        const processingDelayed = bodyText.includes('processing may take') || bodyText.includes('processing could take') || bodyText.includes('may take up to') || bodyText.includes('processing is taking longer') || bodyText.includes('processing might take');
+
+        // Detect fast-publish indicator
+        const videoPublished = bodyText.includes('video published') || bodyText.includes('published') && bodyText.includes('video');
+
+        // Percentage match
         const pctMatch = bodyText.match(/(\d{1,3})\s*%/);
         const pct = pctMatch ? parseInt(pctMatch[1], 10) : null;
 
-        return { uploading, uploadComplete, pct };
+        return { uploading, uploadComplete, processingSD, processingDelayed, videoPublished, pct };
       });
 
-      console.log(`   Post-publish check #${attempt}: uploading=${status.uploading}, complete=${status.uploadComplete}, pct=${status.pct}`);
+      const canClose = !!(status.uploadComplete || status.processingSD || status.videoPublished || (status.pct !== null && status.pct >= 99));
+
+      console.log(`   post-publish [${elapsedSec}s]: uploading=${status.uploading}(${status.pct !== null ? status.pct + '%' : '-%'}), uploadComplete=${status.uploadComplete}, processingSD=${status.processingSD}, processingDelayed=${status.processingDelayed}, videoPublished=${status.videoPublished}, canClose=${canClose}`);
 
       if (status.uploading) {
-        console.log('   Still uploading, waiting 10s before retry...');
-        await page.waitForTimeout(10000);
+        // Still uploading; wait a bit but poll faster to catch quick transitions like "Video published"
+        await page.waitForTimeout(5000);
         continue;
       }
 
-      if (status.uploadComplete || (status.pct !== null && status.pct >= 99)) {
+      if (status.videoPublished || status.uploadComplete || status.processingSD || (status.pct !== null && status.pct >= 99)) {
         // Thử click Close nếu có
         const clicked = await page.evaluate(() => {
           try {
-            // Tìm các nút có khả năng đóng dialog: 'Close', 'Done', 'X', aria-label 'Close'...
-            const candidates = Array.from(document.querySelectorAll('ytcp-button, button, paper-button'));
+            const candidates = Array.from(document.querySelectorAll('ytcp-button, button, paper-button, ytcp-dialog, ytcp-ui, ytcp-uploads-dialog'));
             for (const btn of candidates) {
-              const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+              const aria = (btn.getAttribute && (btn.getAttribute('aria-label') || '') || '').toLowerCase();
               const text = (btn.textContent || '').toLowerCase();
 
-              if (aria.includes('close') || text.includes('close') || text.includes('done') || aria.includes('done')) {
+              if (aria.includes('close') || text.includes('close') || text.includes('done') || aria.includes('done') || text.includes('ok') || aria.includes('ok')) {
                 btn.click();
                 return true;
               }
             }
 
-            // Nếu không tìm thấy, thử tìm nút đóng trong dialog cụ thể
+            // Try dialog specific close buttons
             const dialog = document.querySelector('ytcp-dialog') || document.querySelector('tp-yt-paper-dialog') || document.querySelector('ytcp-uploads-dialog');
             if (dialog) {
-              const closeBtn = dialog.querySelector('button[aria-label*="close"], button[aria-label*="Close"], ytcp-button[aria-label*="Close"], button:contains("Close")');
+              // Query multiple possible close selectors
+              const closeBtn = dialog.querySelector('button[aria-label*="close"], button[aria-label*="Close"], ytcp-button[aria-label*="Close"], ytcp-button:contains("Done")');
               if (closeBtn) { closeBtn.click(); return true; }
+
+              // Fallback: try any button inside dialog that looks like Done/Close
+              const dlgButtons = Array.from(dialog.querySelectorAll('button, ytcp-button'));
+              for (const b of dlgButtons) {
+                const t = (b.textContent || '').toLowerCase();
+                const a = (b.getAttribute && (b.getAttribute('aria-label') || '') || '').toLowerCase();
+                if (t.includes('done') || t.includes('close') || a.includes('close') || t.includes('publish') || a.includes('publish')) {
+                  b.click();
+                  return true;
+                }
+              }
             }
           } catch (e) {
             // ignore
@@ -409,17 +436,23 @@ class YoutubeUploadUiService {
         });
 
         if (clicked) {
-          console.log('✅ Clicked Close after upload complete');
+          console.log('✅ Clicked Close after upload/publish state');
           await page.waitForTimeout(1000);
           return true;
         }
 
-        console.log('⚠️ Close button not found yet, waiting 3s and retrying...');
+        // If video was published but Close button not found, return true to allow flow to proceed (some flows don't require closing)
+        if (status.videoPublished) {
+          console.log('ℹ️ Video published detected but Close button not found yet; returning success to continue flow');
+          return true;
+        }
+
+        console.log('⚠️ Close button not found yet despite publish/complete state, waiting 3s and retrying...');
         await page.waitForTimeout(3000);
         continue;
       }
 
-      // Nếu không detect được trạng thái rõ ràng, chờ 3s rồi kiểm tra lại
+      // If none of the clear states detected, wait a short while and retry
       await page.waitForTimeout(3000);
     }
 

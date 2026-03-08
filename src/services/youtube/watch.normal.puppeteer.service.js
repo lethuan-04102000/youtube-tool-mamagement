@@ -161,9 +161,9 @@ class WatchNormalPuppeteerService {
     const actions = [];
     let volumeAdjusted = false;
     
-    // Simple pattern: watch, scroll every 2-3s, pause/resume occasionally
+    // Simple pattern: watch, scroll every 2-3s (pause/resume removed)
     while (Date.now() - startTime < durationInSeconds * 1000) {
-      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);s
       const remainingTime = durationInSeconds - elapsedSeconds;
       
       if (remainingTime <= 0) break;
@@ -181,8 +181,8 @@ class WatchNormalPuppeteerService {
         
         const action = Math.random();
         
-        if (action < 0.3) {
-          // Scroll (30%)
+        if (action < 0.4) {
+          // Scroll (40%)
           console.log(`📜 [${elapsedSeconds}s] Scrolling`);
           const scrollAmount = this.randomDelay(100, 300);
           await page.evaluate((amount) => {
@@ -191,17 +191,8 @@ class WatchNormalPuppeteerService {
           actions.push('scroll');
           await this.sleep(this.randomDelay(2000, 3000));
           
-        } else if (action < 0.5) {
-          // Pause/Resume (20%)
-          console.log(`⏯️  [${elapsedSeconds}s] Pause/Resume`);
-          await page.keyboard.press('Space');
-          await this.sleep(this.randomDelay(2000, 3000));
-          await page.keyboard.press('Space');
-          actions.push('pause_play');
-          await this.sleep(this.randomDelay(2000, 3000));
-          
         } else {
-          // Just watch (50%)
+          // Just watch (60%)
           const watchTime = Math.min(
             this.randomDelay(2, 4),
             remainingTime
