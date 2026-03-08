@@ -56,23 +56,66 @@ class WatchNormalPuppeteerService {
 
       // Click on video to focus and clear any blur
       try {
-        console.log('🖱️  Clicking video player to focus...');
+        console.log('🖱️  Focusing video player (no click)...');
         const video = await page.$('video');
         if (video) {
-          await video.click();
-          await this.sleep(this.randomDelay(500, 1000));
+          // Move mouse to center of video to simulate focus without clicking
+          const box = await video.boundingBox();
+          if (box) {
+            const x = box.x + box.width / 2;
+            const y = box.y + box.height / 2;
+            await page.mouse.move(x, y, { steps: 8 });
+            await this.sleep(this.randomDelay(300, 800));
+          } else {
+            const vp = await page.viewport();
+            await page.mouse.move((vp.width || 1280) / 2, (vp.height || 720) / 2, { steps: 6 });
+            await this.sleep(this.randomDelay(300, 800));
+          }
+
+          // Try to ensure playback programmatically (no click)
+          try {
+            const isPlaying = await page.evaluate(() => {
+              const v = document.querySelector('video');
+              return v && !v.paused;
+            });
+
+            if (!isPlaying) {
+              await page.evaluate(() => {
+                const v = document.querySelector('video');
+                if (v && v.paused) {
+                  try { v.play(); } catch (e) {}
+                }
+              });
+              console.log('▶️  Programmatically requested play (no click)');
+              await this.sleep(this.randomDelay(500, 1200));
+            }
+          } catch (err) {
+            // ignore
+          }
         }
       } catch (e) {
-        console.log('ℹ️  Could not click video');
+        console.log('ℹ️  Could not focus video');
       }
 
-      // Click play if paused
+      // Ensure playback without clicking play button
       try {
-        const playButton = await page.$('button.ytp-large-play-button, button.ytp-play-button[aria-label*="Play"]');
-        if (playButton) {
-          await playButton.click();
-          console.log('▶️  Clicked play');
-          await this.sleep(this.randomDelay(1000, 2000));
+        const isPlaying = await page.evaluate(() => {
+          const vid = document.querySelector('video');
+          return vid && !vid.paused;
+        });
+        if (!isPlaying) {
+          try {
+            await page.evaluate(() => {
+              const vid = document.querySelector('video');
+              if (vid && vid.paused) {
+                try { vid.play(); } catch (e) {}
+              }
+            });
+            console.log('▶️  Programmatically requested play (no click)');
+            await this.sleep(this.randomDelay(1000, 2000));
+          } catch (err) {
+            console.log('ℹ️  Video may already be playing or programmatic play blocked');
+          }
         }
       } catch (e) {
         console.log('ℹ️  Video already playing');
@@ -163,7 +206,7 @@ class WatchNormalPuppeteerService {
     
     // Simple pattern: watch, scroll every 2-3s (pause/resume removed)
     while (Date.now() - startTime < durationInSeconds * 1000) {
-      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);s
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
       const remainingTime = durationInSeconds - elapsedSeconds;
       
       if (remainingTime <= 0) break;
