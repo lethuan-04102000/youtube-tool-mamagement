@@ -184,87 +184,28 @@ class BrowserService {
 
         // Add userDataDir if email provided
         if (email) {
-          const os = require('os');
-          const fs = require('fs');
-
           const profilePath = sessionService.getProfilePath(email);
-          let userDataDirToUse = profilePath;
-          let tempProfileCopy = null;
-
-          try {
-            if (fs.existsSync(profilePath)) {
-              // Check for common lock files that indicate profile is in use by another Chrome
-              const lockCandidates = ['SingletonLock', 'SingletonSocket', 'lock', 'Local State.lock'];
-              const isLocked = lockCandidates.some(f => fs.existsSync(path.join(profilePath, f)));
-
-              if (isLocked) {
-                console.log(`⚠️ Profile ${profilePath} appears to be in use by another Chrome instance. Creating temporary copy to avoid conflict...`);
-                // Create tmp dir and copy profile contents
-                const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-profile-'));
-                try {
-                  // node 16+ supports fs.cpSync
-                  if (fs.cpSync) {
-                    fs.cpSync(profilePath, tmpDir, { recursive: true });
-                  } else {
-                    // fallback: simple recursive copy for older Node versions
-                    const ncp = require('ncp').ncp;
-                    await new Promise((res, rej) => ncp(profilePath, tmpDir, err => err ? rej(err) : res()));
-                  }
-                  tempProfileCopy = tmpDir;
-                  userDataDirToUse = tmpDir;
-                  console.log(`📂 Temporary profile copy created at ${tmpDir}`);
-                } catch (copyErr) {
-                  console.warn('⚠️ Failed to copy profile, falling back to using original profile path:', copyErr.message);
-                  userDataDirToUse = profilePath;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('⚠️ Error while checking/copying profile:', e.message);
-            userDataDirToUse = profilePath;
-          }
-
-          launchOptions.userDataDir = userDataDirToUse;
-          console.log(`📂 Using profile: ${userDataDirToUse}`);
-
-          // If we created a temporary copy, ensure it's cleaned up when browser disconnects
-          if (tempProfileCopy) {
-            // Attach cleanup to browser after launch
-            // We'll attach below after browser is created
-            // Store the path on launchOptions so we can access it later via closure
-            launchOptions._tempProfileToCleanup = tempProfileCopy;
-          }
+          launchOptions.userDataDir = profilePath;
+          console.log(`📂 Using profile: ${profilePath}`);
         }
 
         const browser = await puppeteer.launch(launchOptions);
         
-        // Get pages created by the launched browser
+        // Get existing pages (usually 1 blank tab is created automatically)
         const pages = await browser.pages();
         let page;
-        if (!pages || pages.length === 0) {
-          // If no pages returned, create a new one
-          page = await this.createPage(browser);
-          console.log(`✅ Created new first tab`);
-        } else {
+        
+        if (pages.length > 0) {
           // Use the first existing tab (most reliable for anti-detection)
           page = pages[0];
-          console.log(`✅ Using existing first tab (${pages.length} tabs total)`);
+          console.log(`✅ Using existing first tab`);
+          
           // Apply anti-detection measures to existing tab
           await this.applyAntiDetection(page);
-        }
-
-        // If a temporary profile was used, schedule cleanup when browser disconnects
-        if (launchOptions._tempProfileToCleanup) {
-          const tempPath = launchOptions._tempProfileToCleanup;
-          browser.on('disconnected', () => {
-            try {
-              const fs = require('fs');
-              fs.rmSync(tempPath, { recursive: true, force: true });
-              console.log(`🧹 Cleaned up temporary profile copy: ${tempPath}`);
-            } catch (e) {
-              console.warn('⚠️ Failed to cleanup temp profile copy:', e.message);
-            }
-          });
+        } else {
+          // No tabs exist, create new one
+          page = await this.createPage(browser);
+          console.log(`✅ Created new first tab`);
         }
 
         // Track browser and page
@@ -371,20 +312,6 @@ class BrowserService {
       Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en']
       });
-
-      // Also set navigator.language to ensure sites (like YouTube) see the primary language
-      Object.defineProperty(navigator, 'language', {
-        get: () => 'en-US'
-      });
-
-      // Set document language to en to help server-side and client-side checks
-      try {
-        if (document && document.documentElement) {
-          document.documentElement.lang = 'en-US';
-        }
-      } catch (e) {
-        // ignore
-      }
       
       // Override chrome property
       window.chrome = {
@@ -471,15 +398,6 @@ class BrowserService {
         get: () => 8
       });
     });
-
-    // Ensure Accept-Language header is present for existing pages
-    try {
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9'
-      });
-    } catch (e) {
-      // ignore
-    }
 
     // Add random mouse movements to mimic human behavior
     page.on('load', async () => {
