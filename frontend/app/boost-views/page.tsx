@@ -32,7 +32,7 @@ export default function BoostViewsPage() {
   const fetchAccountsPage = async (pageNum = 1, append = false) => {
     setLoadingAccounts(true);
     try {
-      const res = await fetch(`http://localhost:3006/api/v1/accounts?page=${pageNum}&limit=${limit}`);
+      const res = await fetch(`${buildApiUrl(API_ENDPOINTS.ACCOUNTS.LIST)}?page=${pageNum}&limit=${limit}`);
       if (!res.ok) {
         setLoadingAccounts(false);
         return;
