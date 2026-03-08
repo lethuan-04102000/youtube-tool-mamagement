@@ -18,13 +18,31 @@ class WatchController {
         useAccounts = false,
         humanBehavior = true,
         randomDuration = false,
-        autoSubscribe = false,
         autoComment = false,        // ⚡ NEW: Auto comment on video
-        autoLike = false,           // ⚡ NEW: Auto like video
         batchSize = 4,
         proxyFile = null,           // ⚡ NEW: Path to proxy file
         proxyList = null            // ⚡ NEW: Array of proxies
       } = req.body;
+
+      // New: accept explicit list of emails or ids (selectedChannels) to use for viewing
+      const selectedChannels = req.body.selectedChannels || req.body.emails || [];
+      const PROCESS_BATCH_SIZE = 3; // Always process in batches of 3
+
+      // Normalize selectedChannels: separate numeric ids and string emails
+      const channelIds = [];
+      const channelEmails = [];
+      if (Array.isArray(selectedChannels)) {
+        for (const v of selectedChannels) {
+          if (typeof v === 'number' || (!isNaN(Number(v)) && String(v).trim() !== '')) {
+            channelIds.push(Number(v));
+          } else if (typeof v === 'string' && v.includes('@')) {
+            channelEmails.push(v);
+          } else if (typeof v === 'string' && v.trim() !== '') {
+            // treat non-numeric strings as emails if they contain alpha characters
+            channelEmails.push(v);
+          }
+        }
+      }
 
       if (!videoUrl) {
         return res.status(400).json({
@@ -46,11 +64,11 @@ class WatchController {
         });
       }
 
-      // ⚡ Validate: Comment/Like only work with logged-in accounts
-      if ((autoComment || autoLike) && !useAccounts) {
+      // ⚡ Validate: Auto comment requires logged-in accounts
+      if (autoComment && !useAccounts) {
         return res.status(400).json({
           success: false,
-          message: 'autoComment and autoLike require useAccounts=true (must be logged in)'
+          message: 'autoComment requires useAccounts=true (must be logged in)'
         });
       }
 
@@ -63,53 +81,78 @@ class WatchController {
 
       console.log(`\n🎬 Starting video watch task...`);
       console.log(`📹 Video URL: ${videoUrl}`);
-      console.log(`📊 Total Views: ${tabs}`);
+      console.log(`📊 Requested tabs (ignored, fixed to): ${PROCESS_BATCH_SIZE}`);
       console.log(`🔢 Batch Size: ${batchSize} tabs at a time`);
       console.log(`⏱️  Duration: ${duration}s per tab`);
       console.log(`👤 Use Accounts: ${useAccounts}`);
       console.log(`🎭 Human Behavior: ${humanBehavior}`);
       console.log(`🎲 Random Duration: ${randomDuration}`);
-      console.log(`📺 Auto Subscribe: ${autoSubscribe}`);
       console.log(`💬 Auto Comment: ${autoComment}`);
-      console.log(`👍 Auto Like: ${autoLike}`);
+      console.log(`📨 Emails provided: ${selectedChannels && selectedChannels.length ? selectedChannels.join(', ') : 'None'}`);
       console.log(`🌐 Proxies: ${proxies.length > 0 ? `${proxies.length} available` : 'None'}\n`);
 
       let accounts = [];
-      
-      if (useAccounts) {
-        // Get accounts from database that have channels
+      // If useAccounts and selectedChannels provided, fetch matching accounts (limit to selected list)
+      if (useAccounts && (channelIds.length > 0 || channelEmails.length > 0)) {
+        const where = {};
+        if (channelIds.length > 0) where.id = channelIds;
+        if (channelEmails.length > 0) where.email = channelEmails;
+
         accounts = await AccountYoutube.findAll({
-          where: {
-            is_create_channel: true
-          },
-          limit: tabs
+          where,
+          // limit to how many were requested
+          limit: Math.max(channelIds.length + channelEmails.length, PROCESS_BATCH_SIZE)
         });
 
-        if (accounts.length === 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'No accounts with channels found in database'
-          });
+        if (!accounts || accounts.length === 0) {
+          console.log('⚠️ No matching accounts found for provided selectedChannels — will use anonymous tabs for missing slots');
+        } else {
+          console.log(`👥 Found ${accounts.length} matching accounts`);
         }
+      } else if (useAccounts) {
+        // If useAccounts requested but no selectedChannels supplied, try to fetch any accounts with channels up to TARGET_TABS
+        accounts = await AccountYoutube.findAll({
+          where: { is_create_channel: true },
+          limit: TARGET_TABS
+        });
 
-        console.log(`👥 Found ${accounts.length} accounts with channels\n`);
+        if (!accounts || accounts.length === 0) {
+          console.log('⚠️ No accounts with channels found in database — will fall back to anonymous tabs');
+        } else {
+          console.log(`👥 Found ${accounts.length} accounts with channels`);
+        }
       }
 
       const results = [];
-      const tabsToOpen = useAccounts ? Math.min(tabs, accounts.length) : tabs;
+      
+      // Decide targets and total tabs to open:
+      // - If user provided selectedChannels and useAccounts=true -> open for each matching account (one tab per profile)
+      // - Otherwise fallback to opening anonymous tabs using the provided `tabs` param
+      let tabsToOpen = 0;
+      let targets = []; // array of account objects or null
 
-      console.log(`🚀 Opening ${tabsToOpen} tabs in batches of ${batchSize}...\n`);
+      if (useAccounts && (channelIds.length > 0 || channelEmails.length > 0)) {
+        // Use the fetched accounts as targets
+        targets = accounts || [];
+        tabsToOpen = targets.length;
+      } else if (useAccounts && accounts && accounts.length > 0) {
+        targets = accounts;
+        tabsToOpen = targets.length;
+      } else {
+        // No profiles supplied/available -> open anonymous tabs based on tabs param
+        tabsToOpen = parseInt(tabs, 10) || 1;
+      }
+
+      console.log(`🚀 Opening ${tabsToOpen} tabs (profiles: ${targets.length}) in batches of ${PROCESS_BATCH_SIZE}...\n`);
 
       const watchOptions = {
         humanBehavior,
         randomDuration,
-        autoSubscribe,
-        autoComment,        // ⚡ Pass to watch service
-        autoLike           // ⚡ Pass to watch service
+        autoComment        // ⚡ Pass to watch service
       };
       
-      // Process in batches
-      const totalBatches = Math.ceil(tabsToOpen / batchSize);
+      // Process in fixed batches of PROCESS_BATCH_SIZE
+      const totalBatches = Math.ceil(tabsToOpen / PROCESS_BATCH_SIZE);
       
       for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
         const batchStart = batchIndex * batchSize;
@@ -121,12 +164,13 @@ class WatchController {
         const watchPromises = [];
         
         for (let i = batchStart; i < batchEnd; i++) {
-          const account = useAccounts ? accounts[i] : null;
-          
-          // ⚡ Get random proxy for this tab (if proxies available)
-          const proxy = proxies.length > 0 
-            ? antiDetectionHelper.getRandomProxy(proxies) 
-            : null;
+          // Use account from targets if available at this index, otherwise anonymous
+          const account = (targets && targets[i]) ? targets[i] : null;
+           
+           // ⚡ Get random proxy for this tab (if proxies available)
+           const proxy = proxies.length > 0 
+             ? antiDetectionHelper.getRandomProxy(proxies) 
+             : null;
           
           watchPromises.push(
             this.watchInSingleTab(videoUrl, duration, account, i + 1, watchOptions, proxy)
@@ -192,18 +236,73 @@ class WatchController {
       console.log(`🚀 [Tab ${tabIndex}] Launching browser...`);
       
       const headless = process.env.HEADLESS === 'true';
-      
+      const profileEmail = account ? account.email : null;
+
       // Use Puppeteer Chrome with stealth plugin (better for YouTube)
-      const launchResult = await browserService.launchBrowser(headless);
+      const launchResult = await browserService.launchBrowser(headless, profileEmail, 3, true);
       browser = launchResult.browser;
       
       // Create page with anti-detection
       const page = launchResult.page;
 
-      // Login if account is provided
+      // If account/profile provided, check whether the profile is already signed in to YouTube
+      let skipLogin = false;
       if (account) {
+        try {
+          // Quick probe to YouTube homepage to detect signed-in state
+          await page.goto('https://www.youtube.com/', { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+          // Some page objects (when reusing tabs/profiles) may not implement waitForTimeout
+          await new Promise(r => setTimeout(r, 800));
+
+          const signedIn = await page.evaluate(() => {
+            try {
+              // If avatar button exists in masthead, likely signed in
+              const avatar = document.querySelector('#avatar-btn, ytd-masthead #avatar-btn, tp-yt-paper-icon-button#avatar-btn');
+              if (avatar) return true;
+
+              // Fallback: search for 'sign in' button text; if not found, assume signed in
+              const bodyText = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+              const hasSignIn = bodyText.includes('sign in') || bodyText.includes('đăng nhập') || bodyText.includes('đăng nhập vào');
+              return !hasSignIn;
+            } catch (e) {
+              return false;
+            }
+          });
+
+          if (signedIn) {
+            skipLogin = true;
+            console.log(`🔐 Profile [${account.email}] appears already signed in — skipping login step`);
+          } else {
+            console.log(`🔐 Profile [${account.email}] not signed in — will perform login`);
+          }
+        } catch (e) {
+          console.warn(`⚠️ Could not determine signed-in state for profile [${account.email}]: ${e.message}`);
+        }
+      }
+
+      // If proxy provided and page supports setting proxy via CDP, attempt to set proxy auth
+      if (proxy && proxy.username && proxy.password) {
+        try {
+          await page.authenticate({ username: proxy.username, password: proxy.password });
+          console.log(`🔐 [Tab ${tabIndex}] Proxy authentication applied`);
+        } catch (e) {
+          console.warn(`⚠️ [Tab ${tabIndex}] Failed to apply proxy auth: ${e.message}`);
+        }
+      }
+
+      // Login if account is provided and not already signed-in
+      if (account && !skipLogin) {
         console.log(`🔐 [Tab ${tabIndex}] Logging in as ${account.email}...`);
         await googleAuthService.login(page, account.email, account.password);
+      } else if (account && skipLogin) {
+        console.log(`🔐 [Tab ${tabIndex}] Using existing signed-in profile for ${account.email}`);
+      }
+
+      // Ensure we are on the target video URL before watching
+      try {
+        await page.goto(videoUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      } catch (e) {
+        console.warn(`⚠️ [Tab ${tabIndex}] Failed to navigate directly to video URL: ${e.message}`);
       }
 
       // Watch video with options (human behavior, random duration, etc.)

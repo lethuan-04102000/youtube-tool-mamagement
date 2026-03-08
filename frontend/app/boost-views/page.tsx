@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PlayCircle, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { buildApiUrl, API_ENDPOINTS } from '@/lib/constants';
 
@@ -9,15 +9,99 @@ export default function BoostViewsPage() {
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   
+  // List of channels/accounts fetched from API
+  const [channels, setChannels] = useState<any[]>([]);
+  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+
+  // Pagination state for accounts
+  const [page, setPage] = useState<number>(1);
+  const [limit, setLimit] = useState<number>(50);
+  const [totalPages, setTotalPages] = useState<number | null>(null);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [loadingAccounts, setLoadingAccounts] = useState<boolean>(false);
+
   const [formData, setFormData] = useState({
     videoUrl: '',
-    tabs: 15,
-    batchSize: 5,
     duration: 60,
     useAccounts: true,
     autoSubscribe: true,
     humanBehavior: true,
   });
+
+  // Fetch a specific page; append controls whether to append results or replace
+  const fetchAccountsPage = async (pageNum = 1, append = false) => {
+    setLoadingAccounts(true);
+    try {
+      const res = await fetch(`http://localhost:3006/api/v1/accounts?page=${pageNum}&limit=${limit}`);
+      if (!res.ok) {
+        setLoadingAccounts(false);
+        return;
+      }
+      const data = await res.json();
+      // API might return { data: [...], total, page, limit } or directly an array
+      const list = data.data || data.docs || data || [];
+
+      if (append) {
+        setChannels(prev => {
+          // avoid duplicates by id/_id/email
+          const existingIds = new Set(prev.map(ch => ch.id || ch._id || ch.email || ch.channelId));
+          const toAdd = list.filter((ch: any) => {
+            const id = ch.id || ch._id || ch.email || ch.channelId;
+            return !existingIds.has(id);
+          });
+          return [...prev, ...toAdd];
+        });
+      } else {
+        setChannels(list);
+      }
+
+      // Try to infer total & totalPages
+      const total = data.total || data.totalDocs || data.meta?.total || null;
+      if (total) {
+        setTotalCount(total);
+        setTotalPages(Math.ceil(total / limit));
+      } else if (data.pages) {
+        setTotalPages(data.pages);
+      }
+
+      setPage(pageNum);
+    } catch (e) {
+      console.warn('Could not fetch accounts', e);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    let mounted = true;
+    if (mounted) fetchAccountsPage(1, false);
+    return () => { mounted = false; };
+  }, [limit]);
+
+  const toggleChannel = (id: string) => {
+    setSelectedChannels(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      return [...prev, id];
+    });
+  };
+
+  const loadMore = async () => {
+    // append next page if available
+    const next = (totalPages && page >= totalPages) ? null : page + 1;
+    if (!next) return;
+    await fetchAccountsPage(next, true);
+  };
+
+  const goToPrev = async () => {
+    if (page <= 1) return;
+    await fetchAccountsPage(page - 1, false);
+  };
+
+  const goToNext = async () => {
+    if (totalPages && page >= totalPages) return;
+    await fetchAccountsPage(page + 1, false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,12 +110,14 @@ export default function BoostViewsPage() {
     setResult(null);
 
     try {
+      const payload = { ...formData, selectedChannels };
+
       const response = await fetch(buildApiUrl(API_ENDPOINTS.WATCH.BATCH), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
@@ -75,40 +161,8 @@ export default function BoostViewsPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Tabs */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Số lượng tab
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={formData.tabs}
-                onChange={(e) => setFormData({ ...formData, tabs: parseInt(e.target.value) })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Tổng số tab trình duyệt sẽ mở</p>
-            </div>
-
-            {/* Batch Size */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Kích thước lô
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={formData.batchSize}
-                onChange={(e) => setFormData({ ...formData, batchSize: parseInt(e.target.value) })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Số tab mở cùng lúc</p>
-            </div>
-
-            {/* Duration */}
-            <div>
+            {/* Duration only (tabs/batch removed) */}
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Thời lượng xem (giây)
               </label>
@@ -220,10 +274,10 @@ export default function BoostViewsPage() {
                 <div className="font-mono text-gray-900">{result.data.campaignId}</div>
                 
                 <div className="text-gray-600">Tổng số tab:</div>
-                <div className="text-gray-900">{formData.tabs}</div>
+                <div className="text-gray-900">—</div>
                 
                 <div className="text-gray-600">Kích thước lô:</div>
-                <div className="text-gray-900">{formData.batchSize}</div>
+                <div className="text-gray-900">—</div>
                 
                 <div className="text-gray-600">Thời lượng:</div>
                 <div className="text-gray-900">{formData.duration} giây</div>
@@ -241,6 +295,46 @@ export default function BoostViewsPage() {
           )}
         </div>
       )}
+
+      {/* Channel selection */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="font-medium text-gray-800">Chọn kênh (mỗi lần mở 3 tab để xem)</h3>
+            <p className="text-xs text-gray-500">Chọn các tài khoản/kênh sẽ được dùng để xem video. Mặc định mở 3 tab/tại lượt chạy.</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={goToPrev} disabled={page <= 1 || loadingAccounts} className="px-3 py-1 bg-gray-100 rounded disabled:opacity-50">Prev</button>
+            <div className="text-sm text-gray-600">Page {page}{totalPages ? ` / ${totalPages}` : ''}</div>
+            <button type="button" onClick={goToNext} disabled={(totalPages != null && page >= totalPages) || loadingAccounts} className="px-3 py-1 bg-gray-100 rounded disabled:opacity-50">Next</button>
+            <button type="button" onClick={loadMore} disabled={loadingAccounts || (totalPages != null && page >= totalPages)} className="px-3 py-1 bg-blue-50 text-blue-700 rounded">Load more</button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-auto">
+          {loadingAccounts && <div className="text-sm text-gray-500">Đang tải danh sách kênh...</div>}
+          {!loadingAccounts && channels.length === 0 && <div className="text-sm text-gray-500">Không có kênh</div>}
+
+          {channels.map((ch: any) => {
+            const id = ch.id || ch._id || ch.email || ch.channelId || JSON.stringify(ch);
+            const label = ch.email || ch.name || ch.displayName || ch.channelId || id;
+            return (
+              <label key={id} className="flex items-center gap-2 p-2 border rounded hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  checked={selectedChannels.includes(id)}
+                  onChange={() => toggleChannel(id)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+                />
+                <span className="text-sm text-gray-700 truncate">{label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 text-sm text-gray-600">Đã chọn: {selectedChannels.length} kênh</div>
+      </div>
 
       {/* Info Section */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">

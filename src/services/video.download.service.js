@@ -1,6 +1,7 @@
 const browserService = require('./browser.service');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios');
 
 class VideoDownloadService {
 
@@ -36,22 +37,36 @@ class VideoDownloadService {
     let browser = null;
     let page = null;
     let result = null; // Track if browser is new or reused
+    let profileEmail = null;
 
     try {
       console.log(`\n📥 Tải video từ Facebook`);
       console.log(`   URL: ${videoUrl}`);
       console.log(`   Quality: ${quality}`);
       if (this.email) {
-        console.log(`   Account: ${this.email} (using clean browser for download)`);
+        console.log(`   Account: ${this.email} (may use profile if available)`);
       }
 
-      // Launch CLEAN browser (no profile) for download
-      // Always fresh browser - download doesn't need session/cookies
-      result = await browserService.launchBrowser(false, null, 3, false);
+      // Decide which profile to use (allow override via options.profileEmail)
+      profileEmail = options.profileEmail ? options.profileEmail : (this.email ? this.email.replace(/-\d+$/, '') : null);
+
+      if (profileEmail) {
+        console.log(`   ⚙️ Using browser profile: [${profileEmail}]`);
+      } else {
+        console.log(`   🆕 Using clean browser (no profile)`);
+      }
+
+      // Launch browser WITH profile (reuse if open) or clean browser
+      // reuseIfOpen=true to mirror openBrowserWithProfile behaviour
+      result = await browserService.launchBrowser(false, profileEmail, 3, true);
       browser = result.browser;
       page = result.page;
-      
-      console.log('   🆕 Launched clean browser for download (no profile)');
+
+      if (result.isNewBrowser) {
+        console.log(`   🆕 Launched new browser${profileEmail ? ` with profile [${profileEmail}]` : ' (clean)'}`);
+      } else {
+        console.log(`   🔄 Reused existing browser for [${profileEmail}]`);
+      }
 
       // Cấu hình download behavior
       const client = await page.target().createCDPSession();
@@ -84,11 +99,44 @@ class VideoDownloadService {
       // Đợi kết quả
       await this.waitForResult(page);
 
-      // Click download
-      await this.clickDownloadButton(page, quality);
+      // Try to extract a direct download URL from the page and download via axios (faster, bypasses Chrome SafeBrowsing)
+      let downloadedFile = null;
+      try {
+        const directUrl = await page.evaluate(() => {
+          // common selectors / heuristics
+          const selCandidates = [
+            'a.download-link-fb',
+            'a.button.download-link-fb',
+            'a[href*="fbcdn.net"]',
+            'a[href$=".mp4"]',
+            'a[href*="dl.snapcdn"]'
+          ];
 
-      // Đợi file download
-      const downloadedFile = await this.waitForDownload(outputFileName);
+          for (const sel of selCandidates) {
+            const el = document.querySelector(sel);
+            if (el && el.href) return el.href;
+          }
+
+          // fallback: any anchor with mp4 or fbcdn
+          const all = Array.from(document.querySelectorAll('a'));
+          const found = all.find(a => a.href && (a.href.includes('fbcdn.net') || a.href.endsWith('.mp4') || a.href.includes('dl.snapcdn')));
+          return found ? found.href : null;
+        });
+
+        if (directUrl) {
+          console.log('   ℹ️ Found direct link on page, attempting axios download');
+          downloadedFile = await this.downloadWithAxios(directUrl, outputFileName, page);
+        }
+      } catch (err) {
+        console.warn('   ⚠️ Axios download attempt failed:', err.message);
+        downloadedFile = null;
+      }
+
+      // Fallback: nếu không có direct link hoặc axios fail -> đợi Chrome download như cũ
+      if (!downloadedFile) {
+        console.log('   ℹ️ Falling back to browser download - waiting for downloaded file in folder');
+        downloadedFile = await this.waitForDownload(outputFileName);
+      }
 
       if (!downloadedFile) {
         throw new Error('Download timeout');
@@ -96,9 +144,13 @@ class VideoDownloadService {
 
       console.log(`✅ Tải thành công: ${downloadedFile.fileName} (${downloadedFile.sizeMB} MB)`);
 
-      // Always close clean browser after download
-      await browser.close();
-      console.log('   � Closed browser');
+      // Chỉ đóng clean browser; profile browser giữ lại để reuse
+      if (!profileEmail) {
+        try { await browser.close(); } catch (e) { /* ignore */ }
+        console.log('   ✅ Closed clean browser');
+      } else {
+        console.log('   ℹ️ Profile browser left open for reuse');
+      }
 
       return {
         success: true,
@@ -114,16 +166,14 @@ class VideoDownloadService {
 
     } catch (error) {
       console.error(`❌ Lỗi: ${error.message}`);
-      
-      // Always close browser on error (clean browser)
+
+      // Chỉ đóng clean browser khi lỗi
       if (browser) {
         try {
-          await browser.close();
-        } catch (e) {
-          // Ignore close errors
-        }
+          if (!profileEmail) await browser.close();
+        } catch (e) { /* ignore close errors */ }
       }
-      
+
       return { success: false, message: error.message };
     }
   }
@@ -460,6 +510,111 @@ class VideoDownloadService {
       console.error(`❌ Lỗi khi xóa file ${filePath}: ${error.message}`);
       return false;
     }
+  }
+
+  // Download helper: axios stream download, uses page cookies + userAgent
+  async downloadWithAxios(fileUrl, outputFileName = null, page = null) {
+    const parsedName = (outputFileName) ? outputFileName : path.basename(new URL(fileUrl).pathname.split('?')[0]) || `fb_video_${Date.now()}.mp4`;
+    const destPath = path.join(this.downloadDir, parsedName);
+
+    // Build headers: User-Agent, Referer, Cookies
+    let headers = {
+      'User-Agent': await (page ? page.evaluate(() => navigator.userAgent) : Promise.resolve('Mozilla/5.0')),
+      'Referer': 'https://fbdown.to/'
+    };
+
+    if (page) {
+      try {
+        const cookies = await page.cookies();
+        if (cookies && cookies.length > 0) {
+          headers['Cookie'] = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        }
+      } catch (e) {
+        // ignore cookie errors
+      }
+    }
+
+    console.log(`   ⬇️  Starting axios download → ${destPath}`);
+
+    const writer = fs.createWriteStream(destPath);
+
+    const response = await axios.get(fileUrl, {
+      responseType: 'stream',
+      headers,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      timeout: 0
+    });
+
+    const total = parseInt(response.headers['content-length'] || '0', 10);
+    if (total > 0) console.log(`   ℹ️ Expected size: ${(total / (1024 * 1024)).toFixed(2)} MB`);
+
+    let downloaded = 0;
+    let lastLog = Date.now();
+    const logIntervalMs = 2500;
+
+    const progressInterval = setInterval(() => {
+      const mb = (downloaded / 1024 / 1024).toFixed(2);
+      if (total > 0) {
+        const pct = ((downloaded / total) * 100).toFixed(1);
+        console.log(`   ⬇️  ${mb} MB (${pct}%)`);
+      } else {
+        console.log(`   ⬇️  ${mb} MB`);
+      }
+    }, logIntervalMs);
+
+    await new Promise((resolve, reject) => {
+      response.data.on('data', chunk => {
+        downloaded += chunk.length;
+        const now = Date.now();
+        // occasional log if data bursts
+        if (now - lastLog > logIntervalMs) {
+          const mb = (downloaded / 1024 / 1024).toFixed(2);
+          if (total > 0) {
+            const pct = ((downloaded / total) * 100).toFixed(1);
+            console.log(`   ⬇️  ${mb} MB (${pct}%)`);
+          } else {
+            console.log(`   ⬇️  ${mb} MB`);
+          }
+          lastLog = now;
+        }
+      });
+
+      response.data.pipe(writer);
+
+      let finished = false;
+      writer.on('finish', () => {
+        finished = true;
+        clearInterval(progressInterval);
+        resolve();
+      });
+      writer.on('error', err => {
+        clearInterval(progressInterval);
+        reject(err);
+      });
+      response.data.on('error', err => {
+        clearInterval(progressInterval);
+        reject(err);
+      });
+
+      // Safety: if stream ends without 'finish'
+      setTimeout(() => {
+        if (!finished && downloaded > 0 && total > 0 && downloaded >= total) {
+          // best-effort resolve
+          clearInterval(progressInterval);
+          resolve();
+        }
+      }, 1000 * 60 * 5); // 5 minutes
+    });
+
+    const stats = fs.statSync(destPath);
+    console.log(`   ✅ Axios download complete: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
+
+    return {
+      filePath: destPath,
+      fileName: parsedName,
+      sizeMB: (stats.size / (1024 * 1024)).toFixed(2)
+    };
   }
 }
 
